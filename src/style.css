@@ -58,6 +58,8 @@ body.idle, body.idle #stage { cursor: none; }
   left: 50%;
   bottom: 16px;
   transform: translateX(-50%);
+  /* left: 50% would otherwise cap the bar at half the window on a phone. */
+  width: max-content;
   max-width: calc(100% - 32px);
   display: flex;
   flex-wrap: wrap;
@@ -81,6 +83,8 @@ body.idle #bar {
 .group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 4px;
   padding: 0 4px;
 }
@@ -95,6 +99,8 @@ button, select {
   height: 34px;
   padding: 0 10px;
   cursor: pointer;
+  white-space: nowrap; /* A label that wrapped would spill past the fixed height */
+  flex: none;
 }
 button:hover, select:hover { background: var(--btn-bg-hover); }
 button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -266,5 +272,7 @@ body.show-fps #fps { display: block; }
   #bar { bottom: 8px; padding: 6px; gap: 4px; }
   .group + .group { border-left: 0; padding-left: 4px; }
   button.pkg { min-width: 110px; max-width: 150px; }
+  button { padding: 0 8px; }
+  #bar button.pkg { flex: 0 1 auto; }
   .label { display: none; }
 }
