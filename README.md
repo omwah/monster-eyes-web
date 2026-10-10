@@ -6,15 +6,25 @@ bar-shaped pupils, rolling eyeballs, flowing irises, single-eye packages and
 more, all set from each package's `config.eye`.
 
 **Try it: https://omwah.github.io/monster-eyes-web/**. That page is rebuilt
-and republished from `main` on every push.
+and republished from `main` on every push. It is the web version: the eyes
+load as you go, and you can add eye folders of your own.
 
-**The finished thing is one file: `dist/monster-eyes.html`.** It holds the
-code and all 26 eye packages. Double-click it, or copy it to a USB stick or
-attach it to an email. It needs no internet, no install and no web server.
+## Three versions
+
+`python3 tools/build.py` builds all three into `dist/`. None needs internet,
+an install or a web server.
+
+| Version | What it is | For |
+|---|---|---|
+| **Simple**: `monster-eyes-simple.html` | One file with all 26 eyes built in (about 8 MB). It can't import eyes; it just runs | Handing to someone who wants it to work. Double-click it, copy it to a USB stick, attach it to an email |
+| **Customizable**: `monster-eyes-customizable.html` | One small file (about 130 KB) with no eyes in it. You add eye folders, and the browser keeps them | Bringing your own eyes |
+| **Web**: the `web/` folder | A small `index.html`, with each eye in its own file under `eyes/`. The first eye shows straight away and the rest load behind it. Built-in eyes plus importing | The website. It also works copied or unzipped as a folder: open `index.html` |
+
+All three share the same controls; the simple version has no Add eyes….
 
 ## Using it
 
-Open `monster-eyes.html` in Chrome, Edge or Firefox. Move the mouse to bring
+Open the page in Chrome, Edge or Firefox. Move the mouse to bring
 up the controls. They fade out after three seconds, and so does the mouse
 pointer, so the screen shows only the eyes.
 
@@ -76,10 +86,13 @@ Sounds (`.wav`) are ignored, because this version is silent.
 ## Building
 
 ```sh
-python3 tools/build.py        # -> dist/monster-eyes.html, and build/eyes-data.js
+python3 tools/build.py                       # all three versions, and build/eyes-data.js
+python3 tools/build.py --target simple       # or one: simple, customizable or web
 ```
 
-The build needs only the Python standard library. `src/index.html` is the same
+`npm run build`, `npm run build:simple`, `npm run build:customizable` and
+`npm run build:web` do the same. The build needs only the Python standard
+library. `src/index.html` is the same
 page unbundled and runs straight from disk once `build/eyes-data.js` exists,
 which is handy while editing.
 
@@ -88,7 +101,8 @@ which is handy while editing.
 | `src/eyes-assets.js` | `config.eye` parsing, BMP decoding. A port of `Eyes_Assets.cpp` |
 | `src/eyes-renderer.js` | The renderer and animators. A port of `Adafruit_Monster_Eyes.cpp`; the differences are listed at its top |
 | `src/app.js` | Layout, input, controls, wake lock, adding folders |
-| `tools/build.py` | Inlines everything into the single HTML file |
+| `tools/build.py` | Builds the three versions: inlines the code, and either bundles the eyes or writes one script per eye |
+| `.github/workflows/pages.yml` | Publishes the web version to GitHub Pages on every push to `main` |
 
 No runtime dependencies, and no modules, because ES modules do not load from
 `file://`.
@@ -101,7 +115,7 @@ Everything is installed inside this directory:
 npm install && npm run install-browser   # Playwright + Chromium in ./.playwright-browsers
 pixi run build-sim --sim DIR             # the C++ renderer, as a reference
 npm run parity                           # JS port vs C++, pixel by pixel
-python3 tools/build.py && npm test       # the page itself, over file://
+python3 tools/build.py && npm test       # the pages themselves
 ```
 
 `DIR` is the source directory of `eye-sim`, the desktop build of a C++ fork of
@@ -117,8 +131,8 @@ this mode the port draws at the C++ renderer's sizes, a 128 px pair or a 240 px
 single eye, and matches it exactly. All 26 packages are currently
 pixel-identical.
 
-`npm test` opens `dist/monster-eyes.html` from disk in headless Chromium and
-checks:
+`npm test` opens the three builds in headless Chromium, from disk, and the web
+version over http too, and checks:
 - every package draws as circles on black, with the eyeball whole rather than
   cut off at the sides
 - Auto / 1 / 2
@@ -127,7 +141,12 @@ checks:
 - dragging, separately and together
 - sizing
 - the wake lock
-- adding folders
+- adding folders, lids kept in another folder, and removing imported eyes
+- independent sizes, Center and Fit
+- the eye checklist, the slideshow and its transitions, and Auto-blink
+- what each build allows: no importing in the simple build, the empty start
+  of the customizable build, and the web build's first eye showing before
+  the rest have loaded
 - that two eyes at 1920×1080 hold 60 fps
 
 Chromium needs some system libraries. If it will not start, run

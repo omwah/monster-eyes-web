@@ -478,7 +478,19 @@
     return out;
   }
 
+  // Eye package scripts (the web build keeps each package in its own file)
+  // call this as they arrive: MonsterEyes.registerPackage({ id, files }),
+  // with files as base64. The page picks them up through onRegister.
+  const registered = {};
+  function registerPackage(pkg) {
+    if (!pkg || !isStr(pkg.id) || !pkg.files) return;
+    registered[pkg.id] = pkg.files;
+    if (ME.onRegister) ME.onRegister(pkg.id);
+  }
+
   Object.assign(ME, {
+    registered,
+    registerPackage,
     JFloat,
     parseJsonc,
     isNull, isInt, isFloat, isBool, isStr, isFlag, asFloat, asInt, asBool,

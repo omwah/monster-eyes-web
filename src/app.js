@@ -7,6 +7,12 @@
   'use strict';
 
   const ME = window.MonsterEyes;
+
+  // Which build this is: 'simple' (eyes built in, no importing),
+  // 'customizable' (no built-in eyes; import your own), 'web' (built-in eyes
+  // loaded from separate files, plus importing), or 'dev' for src/index.html.
+  const VARIANT = window.MONSTER_EYES_VARIANT || 'dev';
+  const CAN_IMPORT = VARIANT !== 'simple';
   const $ = (id) => document.getElementById(id);
   const stage = $('stage');
   const ring = $('ring');
@@ -83,9 +89,11 @@
   //  PACKAGES
   // ===========================================================================
   //
-  // Each entry: { key, id, label, source: 'bundled' | 'added', b64 | files }.
-  // Bundled packages arrive as base64 and are decoded the first time they are
-  // shown, so a large bundle does not hold up the first frame.
+  // Each entry: { key, id, label, source: 'bundled' | 'added', state, and
+  // b64 | files | src }. Bundled packages arrive as base64 and are decoded the
+  // first time they are shown, so a large bundle does not hold up the first
+  // frame. In the web build they are not here at all to begin with: each has
+  // a script of its own (src) and is 'pending' until that has loaded.
 
   const packages = [];
   let current = -1;
@@ -93,7 +101,63 @@
   const bundle = window.MONSTER_EYES_BUNDLE;
   if (bundle && Array.isArray(bundle.packages)) {
     for (const p of bundle.packages)
-      packages.push({ key: 'bundled:' + p.id, id: p.id, label: p.id, source: 'bundled', b64: p.files });
+      packages.push({ key: 'bundled:' + p.id, id: p.id, label: p.id, source: 'bundled', state: 'ready', b64: p.files });
+  }
+  const manifest = window.MONSTER_EYES_MANIFEST;
+  if (Array.isArray(manifest)) {
+    for (const m of manifest)
+      packages.push({ key: 'bundled:' + m.id, id: m.id, label: m.id, source: 'bundled', state: 'pending', src: m.file });
+  }
+  const isReady = (p) => p.state === 'ready';
+
+  // ---------------------------------------------------------------------------
+  //  Loading the web build's eye files: one <script> each, which hands its
+  //  package to MonsterEyes.registerPackage. A script loads from file:// as
+  //  well as from a server, so the build also works unzipped from disk.
+  // ---------------------------------------------------------------------------
+
+  ME.onRegister = (id) => {
+    const entry = packages.find((p) => p.src && p.id === id && !isReady(p));
+    if (!entry) return;
+    entry.b64 = ME.registered[id];
+    delete ME.registered[id];
+    entry.state = 'ready';
+  };
+
+  function loadEntry(entry) {
+    if (isReady(entry)) return Promise.resolve(entry);
+    if (entry.state === 'failed') return Promise.reject(new Error('it could not be loaded'));
+    if (!entry.loading) {
+      entry.state = 'loading';
+      entry.loading = new Promise((resolve, reject) => {
+        const fail = (why) => {
+          entry.state = 'failed';
+          reject(new Error(why));
+        };
+        const tag = document.createElement('script');
+        tag.src = entry.src;
+        tag.onload = () => (isReady(entry) ? resolve(entry) : fail('its file held no eye package'));
+        tag.onerror = () => fail('its file (' + entry.src + ') could not be loaded');
+        document.head.appendChild(tag);
+      });
+      entry.loading.then(refreshPicker, (e) => {
+        refreshPicker();
+        toast('Could not load “' + prettyName(entry) + '”: ' + e.message, 5000);
+      });
+      refreshPicker();
+    }
+    return entry.loading;
+  }
+
+  // After the first eye is up, fetch the rest one at a time so they don't
+  // compete with it or with drawing.
+  async function preloadRest() {
+    for (const entry of packages.slice()) {
+      if (entry.state !== 'pending') continue;
+      try {
+        await loadEntry(entry);
+      } catch (e) { /* Marked unavailable; carry on with the rest */ }
+    }
   }
 
   function materialize(entry) {
@@ -158,6 +222,22 @@
       if (i === current) btn.setAttribute('aria-current', 'true');
       btn.onclick = () => selectPackage(i);
       row.append(cb, btn);
+      if (p.state === 'loading' || p.state === 'failed') {
+        const mark = document.createElement('span');
+        mark.className = 'pick-state';
+        mark.textContent = p.state === 'loading' ? 'loading…' : 'unavailable';
+        row.appendChild(mark);
+        if (p.state === 'failed') row.classList.add('failed');
+      }
+      if (CAN_IMPORT && isAdded(p)) {
+        const x = document.createElement('button');
+        x.className = 'pick-remove icon';
+        x.textContent = '×';
+        x.title = 'Remove ' + name;
+        x.setAttribute('aria-label', 'Remove ' + name);
+        x.onclick = () => removeAdded(i);
+        row.appendChild(x);
+      }
       list.appendChild(row);
     });
     const included = packages.filter(isIncluded).length;
@@ -167,6 +247,28 @@
       const again = list.querySelector('.pick-row[data-index="' + focusIndex + '"] .pick-name');
       if (again) again.focus();
     }
+  }
+
+  // Forget an imported eye, here and in the browser's storage.
+  function removeAdded(index) {
+    const entry = packages[index];
+    if (!entry || !isAdded(entry)) return;
+    if (!window.confirm('Remove “' + prettyName(entry) + '”? This browser will forget it.')) return;
+    const showing = packages[current];
+    packages.splice(index, 1);
+    prefs.excluded = prefs.excluded.filter((k) => k !== entry.key);
+    savePrefs();
+    deleteAdded(entry.key);
+    if (entry !== showing) {
+      current = packages.indexOf(showing);
+    } else {
+      current = -1;
+      dropRenderer();
+      const next = packages.findIndex((p) => isIncluded(p) && p.state !== 'failed');
+      if (next >= 0 || packages.length) selectPackage(next >= 0 ? next : 0);
+    }
+    refreshPicker();
+    updateEmpty();
   }
 
   function setIncluded(index, on) {
@@ -180,6 +282,22 @@
     if (!on) prefs.excluded.push(key);
     savePrefs();
     refreshPicker();
+  }
+
+  // With no eyes at all (the customizable build before any are added), a
+  // panel explains how to add some, and stays until there are.
+  function updateEmpty() {
+    $('empty').hidden = packages.length > 0;
+  }
+
+  function dropRenderer() {
+    renderer = null;
+    for (const c of eyeCanvases) c.remove();
+    eyeCanvases = [];
+    eyeContexts = [];
+    eyeImages = [];
+    placed = '';
+    ring.classList.remove('on');
   }
 
   function openPicker(open) {
@@ -341,8 +459,25 @@
     syncButtons();
   }
 
+  let wantedIndex = -1; // An eye asked for that is still loading
   function selectPackage(index, announce) {
     if (!packages.length) return;
+    index = ((index % packages.length) + packages.length) % packages.length;
+    const entry = packages[index];
+    if (!isReady(entry)) {
+      // Fetch it ahead of the queue; the eyes showing stay up until it lands.
+      wantedIndex = index;
+      loadEntry(entry).then(() => {
+        if (wantedIndex === index && packages[index] === entry) {
+          wantedIndex = -1;
+          selectPackage(index, announce);
+        }
+      }, () => {
+        if (wantedIndex === index) wantedIndex = -1;
+      });
+      return;
+    }
+    wantedIndex = -1;
     endTransition();
     slideClock = performance.now();
     index = ((index % packages.length) + packages.length) % packages.length;
@@ -352,12 +487,13 @@
     if (announce) toast(prettyName(packages[current]), 1500);
   }
 
-  // The next or previous eye that is checked, skipping unchecked ones.
+  // The next or previous eye that is checked, skipping unchecked ones and
+  // any that could not be loaded.
   function stepPackage(dir, announce) {
     const n = packages.length;
     for (let k = 1; k < n; k++) {
       const i = (((current + dir * k) % n) + n) % n;
-      if (isIncluded(packages[i])) {
+      if (isIncluded(packages[i]) && packages[i].state !== 'failed') {
         selectPackage(i, announce);
         return;
       }
@@ -383,9 +519,9 @@
         while (slideBag.length) {
           const key = slideBag.pop();
           const i = packages.findIndex((p) => p.key === key);
-          if (i >= 0 && i !== from && isIncluded(packages[i])) return i;
+          if (i >= 0 && i !== from && isIncluded(packages[i]) && isReady(packages[i])) return i;
         }
-        slideBag = packages.filter((p, i) => i !== from && isIncluded(p)).map((p) => p.key);
+        slideBag = packages.filter((p, i) => i !== from && isIncluded(p) && isReady(p)).map((p) => p.key);
         for (let i = slideBag.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [slideBag[i], slideBag[j]] = [slideBag[j], slideBag[i]];
@@ -395,7 +531,7 @@
     }
     for (let k = 1; k < n; k++) {
       const i = (((from + k) % n) + n) % n;
-      if (isIncluded(packages[i])) return i;
+      if (isIncluded(packages[i]) && isReady(packages[i])) return i;
     }
     return from;
   }
@@ -759,7 +895,7 @@
   }
   function goIdle() {
     // Not while the viewer is using the bar.
-    if ($('bar').matches(':hover') || !picker.hidden) {
+    if ($('bar').matches(':hover') || !picker.hidden || !$('empty').hidden) {
       idleTimer = setTimeout(goIdle, IDLE_MS);
       return;
     }
@@ -897,7 +1033,13 @@
   $('blink').onclick = toggleAutoBlink;
   $('fullscreen').onclick = toggleFullscreen;
   $('fps-toggle').onclick = toggleFps;
-  $('add').onclick = () => $('folder').click();
+  if (CAN_IMPORT) {
+    $('add').onclick = () => $('folder').click();
+    $('empty-add').onclick = () => $('folder').click();
+  } else {
+    // The simple build only shows what it was built with.
+    for (const id of ['add', 'folder', 'drop', 'empty-add']) $(id).remove();
+  }
   $('bar').addEventListener('pointerdown', () => { wake(); keepAwake(); });
   $('bar').addEventListener('pointermove', wake);
 
@@ -1021,7 +1163,7 @@
       for (const { key, file } of ext.found) files[key] = new Uint8Array(await file.arrayBuffer());
       if (ext.missing.length) unresolved.push(id + ' (' + ext.missing.join(', ') + ')');
       const key = 'added:' + id;
-      const entry = { key, id, label: id, source: 'added', files };
+      const entry = { key, id, label: id, source: 'added', state: 'ready', files };
       const existing = packages.findIndex((p) => p.key === key);
       if (existing >= 0) packages[existing] = entry;
       else packages.push(entry);
@@ -1030,6 +1172,7 @@
       if (firstIndex < 0) firstIndex = packages.findIndex((p) => p.key === key);
     }
     refreshPicker();
+    updateEmpty();
     if (firstIndex >= 0) selectPackage(firstIndex);
     let msg = added ? 'Added ' + added + ' eye package' + (added === 1 ? '' : 's') : 'Nothing added';
     if (!db && added) msg += ' (for this session only: this browser will not keep them)';
@@ -1040,7 +1183,7 @@
     toast(msg, unresolved.length ? 10000 : 6000);
   }
 
-  $('folder').addEventListener('change', (ev) => {
+  if (CAN_IMPORT) $('folder').addEventListener('change', (ev) => {
     const items = [...ev.target.files].map((f) => ({ path: f.webkitRelativePath || f.name, file: f }));
     ev.target.value = '';
     addFiles(items);
@@ -1048,16 +1191,16 @@
 
   // Folders dropped onto the page.
   let dragDepth = 0;
-  window.addEventListener('dragenter', (ev) => {
+  if (CAN_IMPORT) window.addEventListener('dragenter', (ev) => {
     ev.preventDefault();
     dragDepth++;
     document.body.classList.add('dropping');
   });
-  window.addEventListener('dragleave', () => {
+  if (CAN_IMPORT) window.addEventListener('dragleave', () => {
     if (--dragDepth <= 0) document.body.classList.remove('dropping');
   });
-  window.addEventListener('dragover', (ev) => ev.preventDefault());
-  window.addEventListener('drop', async (ev) => {
+  if (CAN_IMPORT) window.addEventListener('dragover', (ev) => ev.preventDefault());
+  if (CAN_IMPORT) window.addEventListener('drop', async (ev) => {
     ev.preventDefault();
     dragDepth = 0;
     document.body.classList.remove('dropping');
@@ -1111,6 +1254,12 @@
       db.transaction('packages', 'readwrite').objectStore('packages').put({ key: entry.key, id: entry.id, files });
     } catch (e) { /* Quota or a closed database: session only */ }
   }
+  function deleteAdded(key) {
+    if (!db) return;
+    try {
+      db.transaction('packages', 'readwrite').objectStore('packages').delete(key);
+    } catch (e) { /* Gone with the session anyway */ }
+  }
   function loadAdded() {
     return new Promise((resolve) => {
       if (!db) return resolve([]);
@@ -1134,21 +1283,37 @@
   syncSlideshow();
 
   async function start() {
-    db = await Promise.race([openDb(), new Promise((r) => setTimeout(() => r(null), 1500))]);
-    for (const rec of await loadAdded()) {
-      if (!rec || !rec.files || !rec.files['config.eye']) continue;
-      packages.push({ key: rec.key, id: rec.id, label: rec.id, source: 'added', files: rec.files });
+    if (CAN_IMPORT) {
+      db = await Promise.race([openDb(), new Promise((r) => setTimeout(() => r(null), 1500))]);
+      for (const rec of await loadAdded()) {
+        if (!rec || !rec.files || !rec.files['config.eye']) continue;
+        packages.push({ key: rec.key, id: rec.id, label: rec.id, source: 'added', state: 'ready', files: rec.files });
+      }
     }
     refreshPicker();
-    if (!packages.length) {
-      toast('No eyes yet. Use “Add eyes…” to pick a folder of eye packages.', 8000);
-      return;
+    updateEmpty();
+    if (!packages.length) return;
+    // The remembered eye, or the first checked one, comes first.
+    let order = packages.map((p, i) => i);
+    const remembered = packages.findIndex((p) => p.key === prefs.pkg);
+    const firstChecked = packages.findIndex(isIncluded);
+    const lead = remembered >= 0 ? remembered : Math.max(0, firstChecked);
+    order = [lead, ...order.filter((i) => i !== lead)];
+    $('loading').hidden = isReady(packages[lead]);
+    for (const i of order) {
+      try {
+        await loadEntry(packages[i]);
+      } catch (e) {
+        continue; // Try the next one
+      }
+      selectPackage(i);
+      break;
     }
-    let index = packages.findIndex((p) => p.key === prefs.pkg);
-    if (index < 0) index = 0;
-    selectPackage(index);
+    $('loading').hidden = true;
     toast('Move the mouse to show the controls', 2500);
+    preloadRest();
   }
+
 
   start();
   wake();
@@ -1162,6 +1327,8 @@
     get blinkCount() { return blinkCount; },
     get packageKey() { return packages[current] ? packages[current].key : null; },
     get packageCount() { return packages.length; },
+    get readyCount() { return packages.filter(isReady).length; },
+    get variant() { return VARIANT; },
     get background() { return background.css; },
     get prefs() { return JSON.parse(JSON.stringify(prefs)); },
     get wakeLocked() { return !!wakeLock || !!(wakeVideo && !wakeVideo.paused); },
@@ -1177,6 +1344,6 @@
     // Pretend the current eye has been showing ms longer than it has.
     slideshowSkip(ms) { slideClock -= ms; },
     nextSlide(from) { return nextSlide(from); },
-    names() { return packages.map((p) => ({ key: p.key, name: prettyName(p), included: isIncluded(p) })); },
+    names() { return packages.map((p) => ({ key: p.key, name: prettyName(p), included: isIncluded(p), state: p.state })); },
   };
 })();

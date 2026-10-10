@@ -1,29 +1,52 @@
 #!/usr/bin/env python3
-"""Package Monster Eyes into one self-contained HTML file.
+"""Build Monster Eyes into pages that need no server and no install.
 
-    python3 tools/build.py [--eyes DIR] [--out FILE]
+    python3 tools/build.py [--target all|simple|customizable|web] [--eyes DIR] [--out FILE]
 
-Reads every eye package under eyes/ (any directory holding a config.eye),
-embeds its config.eye and bitmaps as base64, inlines the stylesheet and
-scripts from src/, and writes dist/monster-eyes.html. That file needs nothing
-else: double-click it, email it, put it on a USB stick.
+Three targets, all from the same src/:
 
-It also writes build/eyes-data.js, which src/index.html loads, so the
-unbundled page can be opened straight from src/ while working on it.
+  simple        dist/monster-eyes-simple.html. One file with every eye package
+                built in, and no way to import more. It just runs.
+  customizable  dist/monster-eyes-customizable.html. One small file with no
+                eyes in it; the viewer adds eye folders, which the browser
+                keeps.
+  web           dist/web/. A small index.html, with each eye package in its own
+                script under eyes/, loaded as the page needs it, plus importing.
+                What the website serves; it also works from a folder or zip.
 
-Standard library only. Sounds are left out: the browser version is silent.
+all (the default) builds the three. --out names the file for a single
+simple or customizable build.
+
+An eye package is any directory under --eyes (default: eyes/) holding a
+config.eye. Its config.eye and bitmaps go in, along with any lids or
+textures its config names from another folder. Sounds are left out: the
+browser version is silent.
+
+A build of the project's own eyes also writes build/eyes-data.js, which
+src/index.html loads, so the unbundled page can be opened straight from src/
+while working on it.
+
+Standard library only.
 """
 
 import argparse
 import base64
+import hashlib
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 KEEP = (".eye", ".bmp")
+REPO = "https://github.com/omwah/monster-eyes-web"
+OUTPUTS = {
+    "simple": ROOT / "dist" / "monster-eyes-simple.html",
+    "customizable": ROOT / "dist" / "monster-eyes-customizable.html",
+    "web": ROOT / "dist" / "web",
+}
 
 
 ASSET_KEYS = ("irisTexture", "scleraTexture", "upperEyelid", "lowerEyelid")
@@ -149,29 +172,12 @@ def inline_safe(js: str) -> str:
     return re.sub(r"</(script)", r"<\\/\1", js, flags=re.IGNORECASE)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--eyes", type=Path, default=ROOT / "eyes", help="directory of eye packages")
-    ap.add_argument("--out", type=Path, default=ROOT / "dist" / "monster-eyes.html")
-    args = ap.parse_args()
-
-    packages = find_packages(args.eyes)
-    if not packages:
-        print(f"No eye packages (directories with a config.eye) under {args.eyes}", file=sys.stderr)
-        return 1
-    data_js = bundle_js(packages)
-
-    # The dev page's data only comes from the project's own eyes, so a build
-    # from some other folder (a test fixture, say) leaves it alone.
-    dev = ROOT / "build" / "eyes-data.js"
-    own_eyes = args.eyes.resolve() == (ROOT / "eyes").resolve()
-    if own_eyes:
-        dev.parent.mkdir(parents=True, exist_ok=True)
-        dev.write_text(data_js, encoding="utf-8")
-
+def page(variant: str, data_scripts) -> str:
+    """index.html with the stylesheet and scripts inlined: the variant flag,
+    then any data scripts, then the code."""
     html = (SRC / "index.html").read_text(encoding="utf-8")
     css = (SRC / "style.css").read_text(encoding="utf-8")
-    scripts = [data_js] + [
+    scripts = [f"window.MONSTER_EYES_VARIANT = {json.dumps(variant)};\n"] + list(data_scripts) + [
         (SRC / name).read_text(encoding="utf-8")
         for name in re.findall(r'<script src="([\w.-]+\.js)"></script>', html)
     ]
@@ -180,18 +186,77 @@ def main() -> int:
     html = re.sub(r"<!-- build:js -->.*?<!-- /build:js -->",
                   lambda _: "\n".join("<script>\n" + inline_safe(s) + "</script>" for s in scripts),
                   html, flags=re.S)
-
-    # The MIT notice travels with every copy, and this file is the copy.
+    # The MIT notice travels with every copy, and this file is a copy.
     notice = (ROOT / "LICENSE").read_text(encoding="utf-8").replace("--", "- -")
-    html = html.replace("<head>", "<head>\n<!--\nMonster Eyes for the browser: "
-                        "https://github.com/omwah/monster-eyes-web\n\n" + notice + "-->", 1)
+    return html.replace("<head>", f"<head>\n<!--\nMonster Eyes for the browser ({variant}): "
+                        f"{REPO}\n\n" + notice + "-->", 1)
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(html, encoding="utf-8")
-    size = args.out.stat().st_size / 1e6
-    print(f"{len(packages)} eye packages -> {args.out.relative_to(ROOT) if args.out.is_relative_to(ROOT) else args.out} ({size:.1f} MB)")
-    if own_eyes:
-        print(f"dev data -> {dev.relative_to(ROOT)}")
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def shown(path: Path) -> str:
+    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
+
+
+def build_web(packages, out_dir: Path) -> None:
+    """index.html plus one script per package, named by a hash of its
+    contents so it can be cached for good. The manifest in the page lists
+    them in order, so every eye can be named before any has arrived."""
+    eyes_dir = out_dir / "eyes"
+    if eyes_dir.exists():
+        shutil.rmtree(eyes_dir)  # Old hashed files would only pile up
+    manifest = []
+    for pkg in packages:
+        body = (f"/* Monster Eyes eye package {json.dumps(pkg['id'])}: {REPO} (MIT) */\n"
+                f"MonsterEyes.registerPackage({json.dumps(pkg, separators=(',', ':'))});\n")
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:10]
+        safe = re.sub(r"[^\w.-]+", "_", pkg["id"])
+        name = f"eyes/{safe}.{digest}.js"
+        write(out_dir / name, body)
+        manifest.append({"id": pkg["id"], "file": name, "bytes": len(body)})
+    data = "window.MONSTER_EYES_MANIFEST = " + json.dumps(manifest, separators=(",", ":")) + ";\n"
+    write(out_dir / "index.html", page("web", [data]))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--target", choices=["all", "simple", "customizable", "web"], default="all")
+    ap.add_argument("--eyes", type=Path, default=ROOT / "eyes", help="directory of eye packages")
+    ap.add_argument("--out", type=Path, help="output file, for a single simple or customizable build")
+    args = ap.parse_args()
+    if args.out and args.target not in ("simple", "customizable"):
+        ap.error("--out needs --target simple or --target customizable")
+
+    targets = ["simple", "customizable", "web"] if args.target == "all" else [args.target]
+    packages = []
+    if any(t != "customizable" for t in targets):
+        packages = find_packages(args.eyes)
+        if not packages:
+            print(f"No eye packages (directories with a config.eye) under {args.eyes}", file=sys.stderr)
+            return 1
+
+    for target in targets:
+        if target == "web":
+            out = OUTPUTS["web"]
+            build_web(packages, out)
+            size = (out / "index.html").stat().st_size / 1e3
+            print(f"web: {len(packages)} eye packages -> {shown(out)}/ (index.html {size:.0f} KB)")
+            continue
+        out = args.out or OUTPUTS[target]
+        data = [bundle_js(packages)] if target == "simple" else []
+        write(out, page(target, data))
+        size = out.stat().st_size / 1e6
+        print(f"{target}: {len(packages) if target == 'simple' else 'no'} eye packages -> {shown(out)} ({size:.1f} MB)")
+
+    # The dev page's data only comes from the project's own eyes, so a build
+    # from some other folder (a test fixture, say) leaves it alone.
+    if packages and args.eyes.resolve() == (ROOT / "eyes").resolve():
+        dev = ROOT / "build" / "eyes-data.js"
+        write(dev, bundle_js(packages))
+        print(f"dev data -> {shown(dev)}")
     return 0
 
 

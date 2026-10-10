@@ -70,6 +70,15 @@
 </div>
 
 <input id="folder" type="file" webkitdirectory directory multiple hidden>
+<div id="empty" hidden>
+  <h1>Add eye folders to begin</h1>
+  <p>An eye package is a folder holding a <code>config.eye</code> file and its
+  <code>.bmp</code> pictures. Pick one, or a folder full of them.</p>
+  <button id="empty-add">Add eyes…</button>
+  <p class="hint">You can also drop folders onto this page. The eyes you add are
+  kept by this browser for next time.</p>
+</div>
+<div id="loading" hidden>Loading eyes…</div>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="drop">Drop eye folders here</div>
 <div id="fps"></div>

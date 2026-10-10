@@ -4,6 +4,9 @@
   "description": "Browser port of the Monster Eyes renderer",
   "scripts": {
     "build": "python3 tools/build.py",
+    "build:simple": "python3 tools/build.py --target simple",
+    "build:customizable": "python3 tools/build.py --target customizable",
+    "build:web": "python3 tools/build.py --target web",
     "test": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers playwright test",
     "parity": "node tests/parity.mjs",
     "install-browser": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers playwright install chromium"

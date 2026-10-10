@@ -1,18 +1,27 @@
-// End-to-end checks of dist/monster-eyes.html, opened the way its user will:
-// straight from disk over file://.
+// End-to-end checks of the three builds in dist/, opened the way their users
+// will: straight from disk over file://, and the web build over http too.
+//
+// Most features are checked on the simple build, which has every eye built
+// in. Importing is checked on the web build, which has built-in eyes and
+// importing both, and on the customizable build, which starts with none.
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
+import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { ROOT, readPng } from './lib/node-env.mjs';
 
-const PAGE = 'file://' + path.join(ROOT, 'dist/monster-eyes.html');
+const SIMPLE = 'file://' + path.join(ROOT, 'dist/monster-eyes-simple.html');
+const CUSTOMIZABLE = 'file://' + path.join(ROOT, 'dist/monster-eyes-customizable.html');
+const WEB_DIR = path.join(ROOT, 'dist/web');
+const WEB = 'file://' + path.join(WEB_DIR, 'index.html');
+const PAGE = SIMPLE;
 const app = (page, expr) => page.evaluate(new Function('return (' + expr + ')'));
 
-async function open(page, errors = []) {
+async function open(page, errors = [], url = PAGE) {
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(PAGE);
+  await page.goto(url);
   await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
   return errors;
 }
@@ -26,8 +35,8 @@ async function snapshot(page) {
 }
 
 test.beforeAll(() => {
-  if (!fs.existsSync(path.join(ROOT, 'dist/monster-eyes.html')))
-    throw new Error('Run python3 tools/build.py first');
+  for (const f of ['dist/monster-eyes-simple.html', 'dist/monster-eyes-customizable.html', 'dist/web/index.html'])
+    if (!fs.existsSync(path.join(ROOT, f))) throw new Error('Run python3 tools/build.py first');
 });
 
 test('opens from file:// and draws every bundled package as circles on black', async ({ page }) => {
@@ -228,7 +237,7 @@ test('keeps the screen awake', async ({ page }) => {
 });
 
 test('Add eyes… takes a single package folder or a folder of them', async ({ page }) => {
-  await open(page);
+  await open(page, [], WEB);
   await page.setInputFiles('#folder', path.join(ROOT, 'eyes/deer'));
   await page.waitForFunction(() => monsterEyesApp.packageKey === 'added:deer');
   expect(await app(page, 'monsterEyesApp.packageCount')).toBe(27);
@@ -321,7 +330,7 @@ const FIXTURE = path.join(ROOT, 'tests/fixtures/shared-eyes');
 
 test('lids kept in another folder are bundled with the package that uses them', async ({ page }) => {
   const out = path.join(ROOT, 'build/fixture.html');
-  execFileSync('python3', [path.join(ROOT, 'tools/build.py'), '--eyes', FIXTURE, '--out', out], { stdio: 'pipe' });
+  execFileSync('python3', [path.join(ROOT, 'tools/build.py'), '--target', 'simple', '--eyes', FIXTURE, '--out', out], { stdio: 'pipe' });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('file://' + out);
@@ -341,7 +350,7 @@ test('lids kept in another folder are bundled with the package that uses them', 
 });
 
 test('Add eyes… finds lids in a folder beside the eyes, and says when they are missing', async ({ page }) => {
-  await open(page);
+  await open(page, [], WEB);
   await page.setInputFiles('#folder', FIXTURE);
   await page.waitForFunction(() => monsterEyesApp.packageCount === 29);
   for (const id of ['shared_lids', 'borrower']) {
@@ -606,4 +615,142 @@ test('Auto-blink toggles blinking on its own; Space still blinks; no lids, no to
   await page.evaluate(() => monsterEyesApp.select(monsterEyesApp.indexOf('pomni')));
   await expect(blink).toBeEnabled();
   expect(await app(page, 'monsterEyesApp.renderer.autoBlink')).toBe(false);
+});
+
+// ---------------------------------------------------------------------------
+//  The three builds
+// ---------------------------------------------------------------------------
+
+test('simple: every eye built in, and no way to import', async ({ page }) => {
+  const errors = await open(page);
+  expect(await app(page, 'monsterEyesApp.variant')).toBe('simple');
+  expect(await app(page, 'monsterEyesApp.readyCount')).toBe(26);
+  for (const id of ['#add', '#folder', '#drop', '#empty-add']) await expect(page.locator(id)).toHaveCount(0);
+  // Dragging files over the page does nothing.
+  await page.evaluate(() => window.dispatchEvent(new DragEvent('dragenter', { bubbles: true })));
+  await expect(page.locator('body')).not.toHaveClass(/dropping/);
+  expect(errors).toEqual([]);
+});
+
+test('customizable: starts empty, imports eyes, keeps them, and can remove one', async ({ page }) => {
+  expect(fs.statSync(path.join(ROOT, 'dist/monster-eyes-customizable.html')).size).toBeLessThan(200 * 1024);
+  expect(fs.readFileSync(path.join(ROOT, 'dist/monster-eyes-customizable.html'), 'utf8')).not.toContain('MONSTER_EYES_BUNDLE =');
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(CUSTOMIZABLE);
+  await expect(page.locator('#empty')).toBeVisible();
+  expect(await app(page, 'monsterEyesApp.packageCount')).toBe(0);
+  // The controls stay up while there is nothing to show.
+  await page.waitForTimeout(3600);
+  await expect(page.locator('body')).not.toHaveClass(/idle/);
+  await page.setInputFiles('#folder', path.join(ROOT, 'eyes'));
+  await page.waitForFunction(() => monsterEyesApp.packageCount === 26 && monsterEyesApp.renderer);
+  await expect(page.locator('#empty')).toBeHidden();
+  // Everything is imported, so nothing needs a * to set it apart.
+  expect((await app(page, 'monsterEyesApp.names()')).some((n) => n.name.endsWith('*'))).toBe(false);
+  // Kept by the browser.
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  expect(await app(page, 'monsterEyesApp.packageCount')).toBe(26);
+  // × forgets one, for good.
+  page.on('dialog', (d) => d.accept());
+  await page.click('#pkg');
+  const doomed = await page.locator('.pick-row').nth(2).locator('.pick-name').textContent();
+  await page.locator('.pick-row').nth(2).locator('.pick-remove').click();
+  await expect.poll(() => app(page, 'monsterEyesApp.packageCount')).toBe(25);
+  await page.waitForTimeout(500); // Let the browser's storage write finish
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  expect(await app(page, 'monsterEyesApp.packageCount')).toBe(25);
+  expect((await app(page, 'monsterEyesApp.names()')).map((n) => n.name)).not.toContain(doomed);
+  expect(errors).toEqual([]);
+});
+
+test('web, from disk: every eye file loads and draws', async ({ page }) => {
+  const errors = await open(page, [], WEB);
+  expect(await app(page, 'monsterEyesApp.variant')).toBe('web');
+  await page.waitForFunction(() => monsterEyesApp.readyCount === 26);
+  expect(errors).toEqual([]);
+});
+
+// The web build over http, as the website serves it.
+test.describe('web, over http', () => {
+  let server, base;
+  const manifest = () => {
+    const html = fs.readFileSync(path.join(WEB_DIR, 'index.html'), 'utf8');
+    return JSON.parse(html.match(/window\.MONSTER_EYES_MANIFEST = (\[.*?\]);/)[1]);
+  };
+  test.beforeAll(async () => {
+    server = http.createServer((req, res) => {
+      const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/^\/+/, '') || 'index.html';
+      const file = path.join(WEB_DIR, rel);
+      if (!file.startsWith(WEB_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+        res.writeHead(404);
+        return res.end();
+      }
+      res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html' : 'text/javascript' });
+      fs.createReadStream(file).pipe(res);
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    base = 'http://127.0.0.1:' + server.address().port + '/';
+  });
+  test.afterAll(() => server && server.close());
+
+  test('the page is small and the first eye shows before the rest arrive', async ({ page }) => {
+    expect(fs.statSync(path.join(WEB_DIR, 'index.html')).size).toBeLessThan(200 * 1024);
+    const lead = manifest()[0].file;
+    const held = [];
+    await page.route('**/eyes/*.js', (route) => (route.request().url().endsWith(lead) ? route.continue() : held.push(route)));
+    await page.goto(base);
+    await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+    // Drawing, with everything else still on its way.
+    expect(await app(page, 'monsterEyesApp.readyCount')).toBe(1);
+    expect(held.length).toBeGreaterThan(0);
+    const lit = await page.evaluate(() => {
+      const c = document.querySelector('#stage canvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 60) return true;
+      return false;
+    });
+    expect(lit).toBe(true);
+    // Let the rest through, one by one as the page asks.
+    for (const r of held) await r.continue().catch(() => {});
+    await page.unroute('**/eyes/*.js');
+    await page.waitForFunction(() => monsterEyesApp.readyCount === 26);
+  });
+
+  test('choosing an eye that has not arrived fetches it ahead of the rest', async ({ page }) => {
+    const files = manifest();
+    const lead = files[0].file, wanted = files[10];
+    const held = new Map();
+    await page.route('**/eyes/*.js', (route) => {
+      const url = route.request().url();
+      if (url.endsWith(lead)) return route.continue();
+      held.set(url.slice(url.lastIndexOf('/eyes/') + 1), route);
+    });
+    await page.goto(base);
+    await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+    await page.click('#pkg');
+    await page.locator('.pick-row').nth(10).locator('.pick-name').click();
+    await expect(page.locator('.pick-row').nth(10).locator('.pick-state')).toHaveText('loading…');
+    // Still showing the first eye while it loads.
+    expect(await app(page, 'monsterEyesApp.packageKey')).toBe('bundled:' + files[0].id);
+    await expect.poll(() => held.has(wanted.file)).toBe(true);
+    await held.get(wanted.file).continue();
+    await page.waitForFunction((k) => monsterEyesApp.packageKey === k, 'bundled:' + wanted.id);
+    expect(await app(page, 'monsterEyesApp.readyCount')).toBeLessThan(26);
+    for (const [f, r] of held) if (f !== wanted.file) await r.continue().catch(() => {});
+    await page.unroute('**/eyes/*.js');
+  });
+
+  test('an eye file that will not load is marked unavailable; the rest carry on', async ({ page }) => {
+    const deer = manifest().find((m) => m.id === 'deer');
+    await page.route('**/' + deer.file, (route) => route.fulfill({ status: 404, body: '' }));
+    await page.goto(base);
+    await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.readyCount === 25);
+    await expect.poll(async () => (await app(page, 'monsterEyesApp.names()')).find((n) => n.key === 'bundled:deer').state).toBe('failed');
+    await page.click('#pkg');
+    const row = page.locator('.pick-row', { hasText: 'Deer' });
+    await expect(row.locator('.pick-state')).toHaveText('unavailable');
+  });
 });

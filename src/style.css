@@ -215,6 +215,37 @@ button.pkg {
 }
 body.dropping #drop { display: flex; }
 
+.pick-state { color: var(--bar-muted); font-size: 12px; white-space: nowrap; }
+.pick-row.failed .pick-name { color: var(--bar-muted); text-decoration: line-through; }
+.pick-remove { height: 26px; width: 26px; font-size: 15px; color: var(--bar-muted); flex: none; }
+
+#empty {
+  position: fixed;
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100% - 32px));
+  padding: 24px 26px;
+  text-align: center;
+  background: var(--bar-bg);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+}
+#empty[hidden], #loading[hidden] { display: none; }
+#empty h1 { margin: 0 0 10px; font-size: 22px; }
+#empty p { margin: 0 0 14px; line-height: 1.5; }
+#empty .hint { margin: 14px 0 0; color: var(--bar-muted); font-size: 13px; }
+#empty button { height: 40px; padding: 0 18px; font-size: 15px; border-color: var(--accent); }
+
+#loading {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--bar-muted);
+  font-size: 15px;
+}
+
 /* Stays up when the controls hide, so it can be read while projecting. */
 #fps {
   position: fixed;
