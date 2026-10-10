@@ -13,6 +13,8 @@
  *    except in parity mode, which reproduces the device's sclera cap.
  *  - Pixels are 32-bit RGBA words for an ImageData. Parity mode quantises
  *    textures to RGB565 first so frames can be compared with the simulator.
+ *  - Outside parity mode, black eyelids and the black around the eyeball are
+ *    drawn transparent, so overlapping eyes don't cover each other.
  *  - The fractal pupil animator steps once per frame on the device. A browser
  *    draws twice as often as the panel did, so outside parity mode it steps on
  *    a 30 Hz clock and is interpolated between steps.
@@ -232,6 +234,10 @@
       // The buffer holds the square plus the pad on every side.
       this.canvasSize = this.size + 2 * this.pad;
       this.circleRadius = this.settings.eyeRadius + 1;
+      // Black lids (many packages use 0x0001, near enough) are the page's own
+      // black, so they can be see-through, and an eye moved over its
+      // neighbour hides only where it shows.
+      this.clearLids = !this.parity && ME.rgb565to888(this.settings.eyelidColor).every((c) => c <= 16);
       this.hasLids = false;
       for (let x = 0; x < this.size; x++)
         if (this.upperOpen[x] !== this.upperClosed[x] || this.lowerOpen[x] !== this.lowerClosed[x]) {
@@ -1014,7 +1020,7 @@
       else if (discCut > 126) discCut = 126;
       const discScale = Math.floor((irisH << 15) / (127 - discCut));
       const backColor = pack565(s.backColor);
-      const eyelidColor = pack565(s.eyelidColor);
+      const eyelidColor = this.clearLids ? 0 : pack565(s.eyelidColor);
       const v = this.variant[e];
       const irisMirror = v.irisMirror, scleraMirror = v.scleraMirror;
       const scleraAngle = E.scleraAngle;

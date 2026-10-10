@@ -307,6 +307,24 @@ test('a rebuilt eye is drawn before it is shown, and does not blink', async ({ p
   expect(res.blinking).toBe(false);
 });
 
+test('black lids are see-through, so overlapping eyes show through each other; coloured lids are not', async ({ page }) => {
+  await open(page);
+  const probe = (name) => page.evaluate((name) => {
+    monsterEyesApp.select(monsterEyesApp.indexOf(name));
+    const r = monsterEyesApp.renderer;
+    r.eye.forEach((E) => { E.blinkState = 0; E.blinkFactor = 0; });
+    const c = document.querySelector('#stage canvas');
+    const W = c.width, ctx = c.getContext('2d');
+    // Just inside the circle at the top, which is lid; and the eye's centre.
+    const lid = ctx.getImageData(W >> 1, Math.round(W / 2 - r.circleRadius + 3), 1, 1).data[3];
+    const middle = ctx.getImageData(W >> 1, W >> 1, 1, 1).data[3];
+    return { clear: r.clearLids, lid, middle };
+  }, name);
+  // Dragon's lids are 0x0001, black near enough.
+  expect(await probe('dragon')).toEqual({ clear: true, lid: 0, middle: 255 });
+  expect(await probe('pomni')).toEqual({ clear: false, lid: 255, middle: 255 });
+});
+
 test('the FPS overlay toggles, stays up with the controls hidden, and is remembered', async ({ page }) => {
   await open(page);
   const fps = page.locator('#fps');

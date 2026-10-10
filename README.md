@@ -62,6 +62,9 @@ sleep.
 
 The background is always black, which is what a projector wants. Each eye is
 drawn as a whole ball, cut to a circle, so nothing but the eye throws light.
+Where an eye's lids are black too, they are see-through, so with **Adjust
+separately** the eyes can be pushed together until they overlap without one
+blacking out the other. Eyes with coloured lids stay solid.
 
 ## Eye packages
 
@@ -135,7 +138,7 @@ pixel-identical.
 `npm test` opens the three builds in headless Chromium, from disk, and the web
 version over http too, and checks:
 - every package draws as circles on black, with the eyeball whole rather than
-  cut off at the sides
+  cut off at the sides, and black lids see-through
 - Auto / 1 / 2
 - following the pointer and converging on it
 - the controls hiding when idle

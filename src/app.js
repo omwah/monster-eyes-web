@@ -447,7 +447,7 @@
       c.className = 'eye';
       stage.appendChild(c);
       eyeCanvases.push(c);
-      eyeContexts.push(c.getContext('2d', { alpha: false }));
+      eyeContexts.push(c.getContext('2d', { alpha: r.clearLids }));
       eyeImages.push(new ImageData(new Uint8ClampedArray(r.buffers[e].buffer), r.canvasSize, r.canvasSize));
     }
     placed = '';
@@ -644,12 +644,13 @@
 
   function eyeAt(x, y) {
     if (!renderer) return -1;
-    const rects = layoutFor(renderer.numEyes);
-    for (let e = rects.length - 1; e >= 0; e--) {
-      const r = rects[e];
-      if (Math.hypot(x - r.x, y - r.y) <= onScreen(r).radius) return e;
-    }
-    return -1;
+    // Eyes can overlap; the one whose centre is nearer wins.
+    let best = -1, bestD = Infinity;
+    layoutFor(renderer.numEyes).forEach((r, e) => {
+      const d = Math.hypot(x - r.x, y - r.y);
+      if (d <= onScreen(r).radius && d < bestD) { best = e; bestD = d; }
+    });
+    return best;
   }
 
   stage.addEventListener('pointerdown', (ev) => {
