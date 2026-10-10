@@ -69,9 +69,10 @@ A package is a directory with a `config.eye` and its bitmaps: 24-bit texture
 BMPs, and 1-bit BMPs for the eyelids, the same format Adafruit's Monster Eyes
 uses.
 `eyes/` holds the 26 packages that are built in. To change the built-in set,
-change `eyes/` and rebuild. To add eyes without rebuilding, use **Add eyes…** in
-the page. Chrome keeps added eyes for next time; other browsers may forget
-them when the page closes.
+change `eyes/` and rebuild. To add eyes without rebuilding, use **Add eyes…**
+in the customizable or web version. The browser keeps added eyes for next
+time where it can (Chrome and Edge do, even for a page opened from disk); ×
+in the eye list removes one again.
 
 A package can use lids or textures kept outside its own folder. A shared
 folder beside the packages works (`"upperEyelid": "../lids/upper.bmp"`), and so
@@ -92,15 +93,15 @@ python3 tools/build.py --target simple       # or one: simple, customizable or w
 
 `npm run build`, `npm run build:simple`, `npm run build:customizable` and
 `npm run build:web` do the same. The build needs only the Python standard
-library. `src/index.html` is the same
-page unbundled and runs straight from disk once `build/eyes-data.js` exists,
-which is handy while editing.
+library. `src/index.html` is the same page unbundled, with the built-in eyes
+and importing both; it runs straight from disk once `build/eyes-data.js`
+exists, which is handy while editing.
 
 | File | |
 |---|---|
 | `src/eyes-assets.js` | `config.eye` parsing, BMP decoding. A port of `Eyes_Assets.cpp` |
 | `src/eyes-renderer.js` | The renderer and animators. A port of `Adafruit_Monster_Eyes.cpp`; the differences are listed at its top |
-| `src/app.js` | Layout, input, controls, wake lock, adding folders |
+| `src/app.js` | Layout, input, controls, the eye list and slideshow, wake lock, adding folders, and loading the web version's eye files |
 | `tools/build.py` | Builds the three versions: inlines the code, and either bundles the eyes or writes one script per eye |
 | `.github/workflows/pages.yml` | Publishes the web version to GitHub Pages on every push to `main` |
 
