@@ -566,3 +566,44 @@ test('slideshow: eyes without lids fade through black instead', async ({ page })
   expect(seen.lowest).toBeLessThan(0.2);
   expect(seen.opacity).toBe('');
 });
+
+test('Auto-blink toggles blinking on its own; Space still blinks; no lids, no toggle', async ({ page }) => {
+  await open(page);
+  const blink = page.locator('#blink');
+  await expect(blink).toHaveAttribute('aria-pressed', 'true');
+  // Off: the eyes never start a blink on their own, even when one is due.
+  await blink.click();
+  await expect(blink).toHaveAttribute('aria-pressed', 'false');
+  const blinked = await page.evaluate(() => new Promise((resolve) => {
+    const r = monsterEyesApp.renderer;
+    r.timeToNextBlink = 0; // Due now, if it were allowed
+    let any = false;
+    const end = performance.now() + 1500;
+    (function tick() {
+      if (r.eye.some((E) => E.blinkState)) any = true;
+      if (performance.now() < end) requestAnimationFrame(tick);
+      else resolve(any);
+    })();
+  }));
+  expect(blinked).toBe(false);
+  // Space blinks once regardless.
+  const before = await app(page, 'monsterEyesApp.blinkCount');
+  await page.keyboard.press(' ');
+  expect(await app(page, 'monsterEyesApp.blinkCount')).toBe(before + 1);
+  // Remembered, and B turns it back on.
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  await expect(blink).toHaveAttribute('aria-pressed', 'false');
+  expect(await app(page, 'monsterEyesApp.renderer.autoBlink')).toBe(false);
+  await page.keyboard.press('b');
+  await expect(blink).toHaveAttribute('aria-pressed', 'true');
+  expect(await app(page, 'monsterEyesApp.renderer.autoBlink')).toBe(true);
+  // An eye with no lids: the toggle is greyed out and says why.
+  await page.evaluate(() => monsterEyesApp.select(monsterEyesApp.indexOf('sauron')));
+  await expect(blink).toBeDisabled();
+  await expect(blink).toHaveAttribute('title', /no eyelids/);
+  // A package that doesn't blink on its own stays that way with the toggle on.
+  await page.evaluate(() => monsterEyesApp.select(monsterEyesApp.indexOf('pomni')));
+  await expect(blink).toBeEnabled();
+  expect(await app(page, 'monsterEyesApp.renderer.autoBlink')).toBe(false);
+});

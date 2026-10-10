@@ -98,6 +98,7 @@ button, select {
 }
 button:hover, select:hover { background: var(--btn-bg-hover); }
 button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
 button[aria-pressed="true"] { border-color: var(--accent); color: #fff; background: rgba(255, 138, 31, 0.22); }
 button.icon { width: 34px; padding: 0; font-size: 16px; }
 button.pkg {

@@ -29,7 +29,8 @@ pointer, so the screen shows only the eyes.
 | Center | C | Back to the middle, keeping each eye's size |
 | Fit | 0 | Back to the fitted size and position |
 | Follow | M | Eyes follow the pointer. When the pointer stops for 5 s, they go back to looking around by themselves |
-| Click an eye, Blink | Space | Blink |
+| Auto-blink | B | Lets the eyes blink now and then on their own. Greyed out for eyes with no lids |
+| Click an eye | Space | Blink once |
 | Full screen | F | |
 | | H | Hide the controls now |
 | FPS | I | Frame-rate overlay: frame rate, slowest frame, time to draw the eyes, and their resolution. It stays up when the controls hide |

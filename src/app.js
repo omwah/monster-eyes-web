@@ -35,6 +35,7 @@
     follow: true,
     separate: false,
     showFps: false,
+    autoBlink: true, // Let the eyes blink on their own, where the package allows
     excluded: [], // Keys of eyes left out of ◀ ▶ and the slideshow
     slideshow: { interval: 0, order: 'order' }, // Seconds per eye (0: always this one)
     layouts: { 1: freshLayout(), 2: freshLayout() },
@@ -295,6 +296,9 @@
     }
     // Rebuilding the same package at another resolution should not show: keep
     // the gaze where it was and skip the blink a fresh eye opens with.
+    // Blinking on its own needs both the package's leave and the viewer's.
+    r.packageAutoBlink = r.autoBlink;
+    r.autoBlink = r.packageAutoBlink && prefs.autoBlink;
     const prev = renderer;
     if (prev && index === current && prev.numEyes === r.numEyes) {
       const now = performance.now() * 1000;
@@ -303,7 +307,6 @@
       r.setScreenGaze(g.x, g.y);
       if (!prev.gazeExternal) r.releaseGaze();
       r.autoGaze = prev.autoGaze;
-      r.autoBlink = prev.autoBlink;
       r.timeOfLastBlink = now;
       r.timeToNextBlink = 1000000 + Math.random() * 3000000;
       // A blink already under way carries on; the clocks are the same.
@@ -335,6 +338,7 @@
     if (r.warnings.length) toast(prettyName(entry) + ': ' + r.warnings[0]);
     governor.reset();
     paint(performance.now());
+    syncButtons();
   }
 
   function selectPackage(index, announce) {
@@ -771,6 +775,14 @@
     $('separate').setAttribute('aria-pressed', String(!!prefs.separate));
     document.body.classList.toggle('adjust-separately', !!prefs.separate);
     $('fps-toggle').setAttribute('aria-pressed', String(!!prefs.showFps));
+    // Auto-blink: greyed out for eyes with no lids to blink with.
+    const blink = $('blink');
+    const lidless = !!renderer && !renderer.hasLids;
+    blink.setAttribute('aria-pressed', String(!!prefs.autoBlink && !lidless));
+    blink.disabled = lidless;
+    blink.title = lidless ? "This eye has no eyelids, so it can't blink"
+      : renderer && !renderer.packageAutoBlink ? "This eye is drawn not to blink on its own; click it or press Space to blink (B)"
+      : 'Blink now and then on their own (B). Click an eye or press Space to blink once';
     document.body.classList.toggle('show-fps', !!prefs.showFps);
     $('fullscreen').setAttribute('aria-pressed', String(!!fullscreenElement()));
   }
@@ -787,6 +799,14 @@
     savePrefs();
     syncButtons();
     toast(prefs.follow ? 'Eyes follow the pointer' : 'Eyes look around on their own', 1500);
+  }
+
+  function toggleAutoBlink() {
+    prefs.autoBlink = !prefs.autoBlink;
+    savePrefs();
+    if (renderer) renderer.autoBlink = renderer.packageAutoBlink && prefs.autoBlink;
+    syncButtons();
+    toast(prefs.autoBlink ? 'The eyes blink on their own' : 'The eyes only blink when clicked', 1500);
   }
 
   function toggleFps() {
@@ -874,7 +894,7 @@
   $('center').onclick = centerLayout;
   $('separate').onclick = toggleSeparate;
   $('follow').onclick = toggleFollow;
-  $('blink').onclick = blinkNow;
+  $('blink').onclick = toggleAutoBlink;
   $('fullscreen').onclick = toggleFullscreen;
   $('fps-toggle').onclick = toggleFps;
   $('add').onclick = () => $('folder').click();
@@ -889,7 +909,8 @@
     let handled = true;
     if (k === 'ArrowRight' || k === 'PageDown') stepPackage(1, true);
     else if (k === 'ArrowLeft' || k === 'PageUp') stepPackage(-1, true);
-    else if (k === ' ' || k === 'b' || k === 'B') blinkNow();
+    else if (k === ' ') blinkNow();
+    else if (k === 'b' || k === 'B') toggleAutoBlink();
     else if (k === 'a' || k === 'A') setEyes('auto');
     else if (k === '1') setEyes(1);
     else if (k === '2') setEyes(2);
