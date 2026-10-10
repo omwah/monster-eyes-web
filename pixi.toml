@@ -1,0 +1,17 @@
+[workspace]
+name = "monster-eyes-web"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = ">=3.11"
+cmake = ">=3.16"
+make = "*"
+cxx-compiler = "*"
+zlib = "*"
+git = "*"
+
+[tasks]
+# The C++ reference renderer for tests/parity.mjs. Point it at the eye-sim
+# source directory: pixi run build-sim --sim DIR, or set MONSTER_EYES_SIM.
+build-sim = "python tools/build_sim.py"

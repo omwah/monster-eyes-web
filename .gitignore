@@ -1,0 +1,24 @@
+# Dependencies, installed locally by npm and pixi
+node_modules/
+.pixi/
+.playwright-browsers/
+
+# Reference C++ renderer: ArduinoJson checkout and the eye-sim build
+vendor/
+
+# Generated: build/eyes-data.js, parity goldens, and the bundled page
+# (rebuild with: python3 tools/build.py)
+build/
+dist/
+
+# Test output
+test-results/
+playwright-report/
+
+# Editors and OS clutter
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+__pycache__/

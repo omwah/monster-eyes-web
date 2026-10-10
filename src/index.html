@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Monster Eyes</title>
+<!-- build:css -->
+<link rel="stylesheet" href="style.css">
+<!-- /build:css -->
+</head>
+<body>
+<div id="stage"></div>
+
+<div id="bar" role="toolbar" aria-label="Eye controls">
+  <div class="group">
+    <button id="prev" class="icon" title="Previous eyes (←)" aria-label="Previous eyes">◀</button>
+    <select id="pkg" title="Choose eyes" aria-label="Choose eyes"></select>
+    <button id="next" class="icon" title="Next eyes (→)" aria-label="Next eyes">▶</button>
+  </div>
+  <div class="group">
+    <span class="label">Eyes</span>
+    <div class="seg" role="group" aria-label="Number of eyes">
+      <button id="count-auto" title="As the eye package wants (A)">Auto</button>
+      <button id="count-1" title="One eye (1)">1</button>
+      <button id="count-2" title="Two eyes (2)">2</button>
+    </div>
+  </div>
+  <div class="group">
+    <span class="label">Size</span>
+    <button id="smaller" class="icon" title="Smaller (−)" aria-label="Smaller">−</button>
+    <button id="bigger" class="icon" title="Bigger (+)" aria-label="Bigger">+</button>
+    <button id="fit" title="Fit to screen and re-centre (0)">Fit</button>
+    <button id="separate" title="Drag eyes one at a time instead of as a pair (S, or hold Shift while dragging)">Move separately</button>
+  </div>
+  <div class="group">
+    <button id="follow" title="Eyes follow the mouse or a finger (M)">Follow</button>
+    <button id="blink" title="Blink (Space)">Blink</button>
+    <button id="add" title="Add eye folders from this computer">Add eyes…</button>
+    <button id="fullscreen" title="Full screen (F)">Full screen</button>
+    <button id="fps-toggle" title="Show the frame rate (I)">FPS</button>
+  </div>
+</div>
+
+<input id="folder" type="file" webkitdirectory directory multiple hidden>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="drop">Drop eye folders here</div>
+<div id="fps"></div>
+
+<!-- build:js -->
+<script src="../build/eyes-data.js"></script>
+<script src="eyes-assets.js"></script>
+<script src="eyes-renderer.js"></script>
+<script src="app.js"></script>
+<!-- /build:js -->
+</body>
+</html>

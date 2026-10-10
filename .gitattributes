@@ -1,0 +1,4 @@
+* text=auto
+*.bmp binary
+*.wav binary
+*.eye text
