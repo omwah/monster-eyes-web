@@ -23,8 +23,10 @@ pointer, so the screen shows only the eyes.
 | ◀ / list / ▶ | ← → | Choose the eyes |
 | Eyes: Auto · 1 · 2 | A, 1, 2 | Auto shows one or two eyes, as each eye package prefers |
 | − / + | − / +, mouse wheel | Smaller / bigger |
-| Fit | 0 | Back to filling the screen, centred |
-| Drag an eye | | Moves the pair. With **Move separately** on (S), or holding Shift, it moves one eye |
+| Drag an eye | | Moves the pair |
+| Adjust separately | S, or hold Shift | Drag and resize one eye at a time. The wheel resizes the eye under the pointer, and − / + the last eye touched, which a dashed ring marks |
+| Center | C | Back to the middle, keeping each eye's size |
+| Fit | 0 | Back to the fitted size and position |
 | Follow | M | Eyes follow the pointer. When the pointer stops for 5 s, they go back to looking around by themselves |
 | Click an eye, Blink | Space | Blink |
 | Full screen | F | |
@@ -33,7 +35,8 @@ pointer, so the screen shows only the eyes.
 | Add eyes… | | Pick an eye folder, or a folder of them, from the computer. Dropping folders on the page works too |
 
 For a projector, press **F** for full screen, then drag and resize the eyes
-to fit the window or prop. The page remembers the size, position, eye choice
+to fit the window or prop; with **Adjust separately**, each eye can have its
+own size and place. The page remembers the size, position, eye choice
 and settings for next time. While it is open it keeps the screen from going to
 sleep.
 

@@ -357,3 +357,67 @@ test('Add eyes… finds lids in a folder beside the eyes, and says when they are
   await expect(page.locator('#toast')).toContainText('Missing files');
   await expect(page.locator('#toast')).toContainText('../lids/upper.bmp');
 });
+
+test('eyes resize independently; Center keeps sizes, Fit resets them', async ({ page }) => {
+  await open(page);
+  await page.click('#count-2');
+  const layout = () => app(page, 'monsterEyesApp.layout()');
+  const fitted = await layout();
+  // Adjusting separately: the wheel over an eye resizes only that eye.
+  await page.keyboard.press('s');
+  await page.mouse.move(fitted[1].x, fitted[1].y);
+  await page.mouse.wheel(0, -300);
+  let now = await layout();
+  expect(now[1].size).toBeGreaterThan(fitted[1].size * 1.3);
+  expect(now[0].size).toBeCloseTo(fitted[0].size, 1);
+  // The ring marks that eye while the controls show.
+  await expect(page.locator('#ring')).toBeVisible();
+  // + and - act on the same eye.
+  const before = now;
+  await page.keyboard.press('-');
+  now = await layout();
+  expect(now[1].size).toBeLessThan(before[1].size);
+  expect(now[0].size).toBeCloseTo(before[0].size, 1);
+  // Together again: the wheel resizes both.
+  await page.keyboard.press('s');
+  await expect(page.locator('#ring')).toBeHidden();
+  const both = await layout();
+  await page.mouse.wheel(0, 300);
+  now = await layout();
+  expect(now[0].size).toBeLessThan(both[0].size);
+  expect(now[1].size).toBeLessThan(both[1].size);
+  // Move the pair away, then Center: back in the middle, sizes kept.
+  const sizes = now.map((r) => r.size);
+  await page.mouse.move(now[0].x, now[0].y);
+  await page.mouse.down();
+  await page.mouse.move(now[0].x - 80, now[0].y + 60, { steps: 5 });
+  await page.mouse.up();
+  await page.click('#center');
+  now = await layout();
+  expect(now.map((r) => r.size)).toEqual(sizes);
+  expect((now[0].x + now[1].x) / 2).toBeCloseTo(640, 0);
+  expect(now[0].y).toBeCloseTo(360, 0);
+  // Fit: fitted sizes and positions.
+  await page.keyboard.press('0');
+  now = await layout();
+  for (let e = 0; e < 2; e++) {
+    expect(now[e].size).toBeCloseTo(fitted[e].size, 1);
+    expect(now[e].x).toBeCloseTo(fitted[e].x, 1);
+  }
+});
+
+test('a layout saved by an earlier version, with one size for both eyes, still loads', async ({ page }) => {
+  await open(page);
+  const fitted = await app(page, 'monsterEyesApp.layout()');
+  await page.evaluate(() => {
+    const p = JSON.parse(localStorage.getItem('monsterEyes.v1') || '{}');
+    p.eyes = 2;
+    p.layouts = { 1: { scale: 1, off: [[0, 0], [0, 0]] }, 2: { scale: 0.5, off: [[0, 0], [0, 0]] } };
+    localStorage.setItem('monsterEyes.v1', JSON.stringify(p));
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  const now = await app(page, 'monsterEyesApp.layout()');
+  expect(now[0].size).toBeCloseTo(fitted[0].size * 0.5, 1);
+  expect(now[1].size).toBeCloseTo(fitted[1].size * 0.5, 1);
+});

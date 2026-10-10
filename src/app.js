@@ -9,6 +9,7 @@
   const ME = window.MonsterEyes;
   const $ = (id) => document.getElementById(id);
   const stage = $('stage');
+  const ring = $('ring');
 
   const IDLE_MS = 3000;          // Controls hide after this long untouched
   const FOLLOW_MS = 5000;        // Pointer gaze lasts this long after it stops
@@ -23,7 +24,9 @@
   // ===========================================================================
 
   const STORE_KEY = 'monsterEyes.v1';
-  const freshLayout = () => ({ scale: 1, off: [[0, 0], [0, 0]] });
+  // Each eye has its own size (a multiple of the fitted size) and its own
+  // offset from the fitted position.
+  const freshLayout = () => ({ scale: [1, 1], off: [[0, 0], [0, 0]] });
   const prefs = {
     pkg: null,
     eyes: 'auto',
@@ -36,12 +39,14 @@
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
     if (saved && typeof saved === 'object') {
       Object.assign(prefs, saved);
+      prefs.layouts = prefs.layouts || {};
       for (const n of [1, 2]) {
-        const l = prefs.layouts && prefs.layouts[n];
-        if (!l || typeof l.scale !== 'number' || !Array.isArray(l.off)) {
-          prefs.layouts = prefs.layouts || {};
-          prefs.layouts[n] = freshLayout();
-        }
+        const l = prefs.layouts[n];
+        // Earlier versions kept one size for both eyes.
+        if (l && typeof l.scale === 'number') l.scale = [l.scale, l.scale];
+        const ok = l && Array.isArray(l.scale) && l.scale.length === 2 && l.scale.every((v) => v > 0) &&
+          Array.isArray(l.off) && l.off.length === 2;
+        if (!ok) prefs.layouts[n] = freshLayout();
       }
     }
   } catch (e) { /* No storage: defaults it is */ }
@@ -148,15 +153,16 @@
     const L = prefs.layouts[n];
     const rects = [];
     if (n === 1) {
-      const size = Math.min(W, H) * 0.92 * L.scale;
+      const size = Math.min(W, H) * 0.92 * L.scale[0];
       rects.push({ x: W / 2, y: H / 2, size });
     } else {
+      // The pair stays centred, spaced by its mean size and the package's gap.
       const g = gapRatio();
       const base = Math.min((W * 0.94) / (2 + g), H * 0.92);
-      const size = base * L.scale;
-      const sep = size * (1 + g);
-      rects.push({ x: W / 2 - sep / 2, y: H / 2, size });
-      rects.push({ x: W / 2 + sep / 2, y: H / 2, size });
+      const s0 = base * L.scale[0], s1 = base * L.scale[1];
+      const sep = ((s0 + s1) / 2) * (1 + g);
+      rects.push({ x: W / 2 - sep / 2, y: H / 2, size: s0 });
+      rects.push({ x: W / 2 + sep / 2, y: H / 2, size: s1 });
     }
     rects.forEach((r, e) => {
       r.x += L.off[e][0] * unit;
@@ -182,8 +188,9 @@
     return prefs.eyes === 1 || prefs.eyes === 2 ? prefs.eyes : 'auto';
   }
 
+  // Both eyes share one render size: enough for the larger of them.
   function renderSizeFor(n) {
-    const size = layoutFor(n)[0].size * view.dpr;
+    const size = Math.max(...layoutFor(n).map((r) => r.size)) * view.dpr;
     return Math.max(MIN_RENDER, Math.min(renderCap, Math.round(size / 2) * 2));
   }
 
@@ -305,6 +312,7 @@
   const pointer = { x: 0, y: 0, t: -Infinity };
   const gaze = { x: 0, y: 0, cx: [0, 0], cy: [0, 0] };
   let drag = null;
+  let selectedEye = -1; // The eye "Adjust separately" acts on; -1 for none yet
 
   function eyeAt(x, y) {
     if (!renderer) return -1;
@@ -324,6 +332,10 @@
     pointer.t = performance.now();
     const n = renderer ? renderer.numEyes : 2;
     const e = eyeAt(ev.clientX, ev.clientY);
+    if (e >= 0 && selectedEye !== e) {
+      selectedEye = e;
+      placed = '';
+    }
     drag = {
       id: ev.pointerId,
       eye: e,
@@ -368,10 +380,18 @@
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
 
+  // The wheel over an eye resizes just that eye when adjusting separately or
+  // with Shift held; otherwise it resizes the pair.
   stage.addEventListener('wheel', (ev) => {
     ev.preventDefault();
     wake();
-    scaleBy(Math.exp(-ev.deltaY * 0.0015));
+    const e = eyeAt(ev.clientX, ev.clientY);
+    const one = (prefs.separate || ev.shiftKey) && e >= 0;
+    if (one && selectedEye !== e) {
+      selectedEye = e;
+      placed = '';
+    }
+    scaleBy(Math.exp(-ev.deltaY * 0.0015), one ? e : undefined);
   }, { passive: false });
 
   let blinkCount = 0;
@@ -381,14 +401,27 @@
     blinkCount++;
   }
 
-  function scaleBy(k) {
+  // Resize one eye, or both. With no eye named, "Adjust separately" means
+  // the last eye touched, and otherwise the pair.
+  function scaleBy(k, eye) {
     const n = renderer ? renderer.numEyes : 2;
     const L = prefs.layouts[n];
-    L.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, L.scale * k));
+    if (eye === undefined) eye = prefs.separate && selectedEye >= 0 && n === 2 ? selectedEye : -1;
+    for (let e = 0; e < 2; e++)
+      if (eye < 0 || e === eye) L.scale[e] = Math.min(MAX_SCALE, Math.max(MIN_SCALE, L.scale[e] * k));
     savePrefs();
     scheduleRebuild();
   }
 
+  // Back to the default positions, keeping the sizes.
+  function centerLayout() {
+    const n = renderer ? renderer.numEyes : 2;
+    prefs.layouts[n].off = [[0, 0], [0, 0]];
+    savePrefs();
+    toast('Centred', 1200);
+  }
+
+  // Back to the default sizes and positions.
   function fitLayout() {
     const n = renderer ? renderer.numEyes : 2;
     prefs.layouts[n] = freshLayout();
@@ -451,9 +484,18 @@
 
   function place() {
     const rects = layoutFor(renderer.numEyes);
-    const key = rects.map((r) => r.x.toFixed(1) + ',' + r.y.toFixed(1) + ',' + r.size.toFixed(1)).join(';');
+    const key = rects.map((r) => r.x.toFixed(1) + ',' + r.y.toFixed(1) + ',' + r.size.toFixed(1)).join(';') +
+      '|' + selectedEye;
     if (key === placed) return;
     placed = key;
+    // A ring marks the eye "Adjust separately" will act on.
+    const sel = rects[selectedEye];
+    ring.classList.toggle('on', !!sel);
+    if (sel) {
+      const d = onScreen(sel).radius * 2 + 8;
+      ring.style.width = ring.style.height = d + 'px';
+      ring.style.transform = 'translate(' + (sel.x - d / 2) + 'px,' + (sel.y - d / 2) + 'px)';
+    }
     rects.forEach((r, e) => {
       const st = eyeCanvases[e].style;
       const c = onScreen(r).canvas;
@@ -538,6 +580,7 @@
     $('count-2').setAttribute('aria-pressed', String(prefs.eyes === 2));
     $('follow').setAttribute('aria-pressed', String(!!prefs.follow));
     $('separate').setAttribute('aria-pressed', String(!!prefs.separate));
+    document.body.classList.toggle('adjust-separately', !!prefs.separate);
     $('fps-toggle').setAttribute('aria-pressed', String(!!prefs.showFps));
     document.body.classList.toggle('show-fps', !!prefs.showFps);
     $('fullscreen').setAttribute('aria-pressed', String(!!fullscreenElement()));
@@ -598,6 +641,7 @@
   $('smaller').onclick = () => scaleBy(1 / 1.1);
   $('bigger').onclick = () => scaleBy(1.1);
   $('fit').onclick = fitLayout;
+  $('center').onclick = centerLayout;
   $('separate').onclick = toggleSeparate;
   $('follow').onclick = toggleFollow;
   $('blink').onclick = blinkNow;
@@ -625,6 +669,7 @@
     else if (k === '+' || k === '=') scaleBy(1.1);
     else if (k === '-' || k === '_') scaleBy(1 / 1.1);
     else if (k === '0') fitLayout();
+    else if (k === 'c' || k === 'C') centerLayout();
     else if (k === 'h' || k === 'H') { clearTimeout(idleTimer); goIdle(); }
     else if (k === 'i' || k === 'I') toggleFps();
     else handled = false;

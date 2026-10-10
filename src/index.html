@@ -9,7 +9,7 @@
 <!-- /build:css -->
 </head>
 <body>
-<div id="stage"></div>
+<div id="stage"><div id="ring"></div></div>
 
 <div id="bar" role="toolbar" aria-label="Eye controls">
   <div class="group">
@@ -29,8 +29,9 @@
     <span class="label">Size</span>
     <button id="smaller" class="icon" title="Smaller (−)" aria-label="Smaller">−</button>
     <button id="bigger" class="icon" title="Bigger (+)" aria-label="Bigger">+</button>
-    <button id="fit" title="Fit to screen and re-centre (0)">Fit</button>
-    <button id="separate" title="Drag eyes one at a time instead of as a pair (S, or hold Shift while dragging)">Move separately</button>
+    <button id="center" title="Put the eyes back in the middle, keeping their sizes (C)">Center</button>
+    <button id="fit" title="Back to the fitted size and position (0)">Fit</button>
+    <button id="separate" title="Drag and resize one eye at a time instead of the pair (S, or hold Shift)">Adjust separately</button>
   </div>
   <div class="group">
     <button id="follow" title="Eyes follow the mouse or a finger (M)">Follow</button>

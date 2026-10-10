@@ -38,6 +38,19 @@ html, body {
   pointer-events: none;
 }
 body.dragging #stage { cursor: grabbing; }
+
+/* Marks the eye "Adjust separately" acts on, while the controls show. */
+#ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1; /* Above the eye canvases */
+  border: 2px dashed var(--accent);
+  border-radius: 50%;
+  pointer-events: none;
+  display: none;
+}
+body.adjust-separately:not(.idle) #ring.on { display: block; }
 body.idle, body.idle #stage { cursor: none; }
 
 #bar {
