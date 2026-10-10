@@ -18,6 +18,8 @@
   const DEVICE_GAP = 28;         // The panel's default gap, against a 128 px eye
   const MAX_RENDER = 512, MIN_RENDER = 128;
   const RENDER_BUDGET_MS = 9;    // Above this the governor lowers resolution
+  const SLIDE_INTERVALS = [0, 30, 60, 120, 300]; // Seconds; 0 keeps one eye
+  const CLOSE_MS = 150, OPEN_MS = 250, FADE_MS = 300; // Slideshow transition
 
   // ===========================================================================
   //  PREFERENCES -- best-effort; the page works the same without storage
@@ -34,6 +36,7 @@
     separate: false,
     showFps: false,
     excluded: [], // Keys of eyes left out of ◀ ▶ and the slideshow
+    slideshow: { interval: 0, order: 'order' }, // Seconds per eye (0: always this one)
     layouts: { 1: freshLayout(), 2: freshLayout() },
   };
   try {
@@ -50,6 +53,9 @@
         if (!ok) prefs.layouts[n] = freshLayout();
       }
       if (!Array.isArray(prefs.excluded)) prefs.excluded = [];
+      const ss = prefs.slideshow;
+      if (!ss || !SLIDE_INTERVALS.includes(ss.interval) || !['order', 'random'].includes(ss.order))
+        prefs.slideshow = { interval: 0, order: 'order' };
     }
   } catch (e) { /* No storage: defaults it is */ }
 
@@ -333,6 +339,8 @@
 
   function selectPackage(index, announce) {
     if (!packages.length) return;
+    endTransition();
+    slideClock = performance.now();
     index = ((index % packages.length) + packages.length) % packages.length;
     build(index);
     prefs.pkg = packages[current] ? packages[current].key : null;
@@ -351,6 +359,108 @@
       }
     }
     if (!isIncluded(packages[current])) toast('No other eyes are checked', 1500);
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Slideshow: after each interval the eyes blink across to the next checked
+  //  eye, in list order or at random. Random draws from a shuffled bag, so
+  //  every checked eye has its turn before any comes round again, and a new
+  //  bag never starts with the eye just shown.
+  // ---------------------------------------------------------------------------
+
+  let slideClock = 0;   // When the current eye came up
+  let slideBag = [];    // Keys still to come in this random round
+  let transition = null;
+
+  function nextSlide(from) {
+    const n = packages.length;
+    if (prefs.slideshow.order === 'random') {
+      for (let tries = 0; tries < 2; tries++) {
+        while (slideBag.length) {
+          const key = slideBag.pop();
+          const i = packages.findIndex((p) => p.key === key);
+          if (i >= 0 && i !== from && isIncluded(packages[i])) return i;
+        }
+        slideBag = packages.filter((p, i) => i !== from && isIncluded(p)).map((p) => p.key);
+        for (let i = slideBag.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [slideBag[i], slideBag[j]] = [slideBag[j], slideBag[i]];
+        }
+      }
+      return from;
+    }
+    for (let k = 1; k < n; k++) {
+      const i = (((from + k) % n) + n) % n;
+      if (isIncluded(packages[i])) return i;
+    }
+    return from;
+  }
+
+  // Close the eyes (or fade, for eyes without lids), swap, then open them.
+  function slideTo(index) {
+    transition = { to: index, start: performance.now(), phase: 'close', lids: !!(renderer && renderer.hasLids) };
+  }
+
+  function endTransition() {
+    if (!transition) return;
+    transition = null;
+    stage.style.opacity = '';
+    if (renderer) renderer.blinkExternal = false;
+  }
+
+  function runSlideshow(now) {
+    if (transition) {
+      const t = transition, dt = now - t.start;
+      if (t.phase === 'close') {
+        const k = Math.min(1, dt / (t.lids ? CLOSE_MS : FADE_MS));
+        if (t.lids) {
+          renderer.blinkExternal = true;
+          renderer.blinkForced = k;
+        } else {
+          stage.style.opacity = String(1 - k);
+        }
+        if (k < 1) return;
+        const to = t.to;
+        transition = null;
+        selectPackage(to);
+        if (renderer.hasLids) {
+          stage.style.opacity = '';
+          renderer.openFromClosed(now * 1000, OPEN_MS * 1000);
+        } else {
+          transition = { phase: 'open', start: now };
+          stage.style.opacity = '0';
+        }
+      } else {
+        const k = Math.min(1, dt / FADE_MS);
+        stage.style.opacity = k < 1 ? String(k) : '';
+        if (k >= 1) transition = null;
+      }
+      return;
+    }
+    const secs = prefs.slideshow.interval;
+    if (!secs || !renderer || now - slideClock < secs * 1000) return;
+    const next = nextSlide(current);
+    if (next === current) slideClock = now;
+    else slideTo(next);
+  }
+
+  function setSlideshow(change) {
+    Object.assign(prefs.slideshow, change);
+    slideBag = [];
+    slideClock = performance.now();
+    savePrefs();
+    syncSlideshow();
+  }
+
+  function syncSlideshow() {
+    const ss = prefs.slideshow;
+    for (const b of document.querySelectorAll('[data-interval]'))
+      b.setAttribute('aria-pressed', String(Number(b.dataset.interval) === ss.interval));
+    for (const b of document.querySelectorAll('[data-order]'))
+      b.setAttribute('aria-pressed', String(b.dataset.order === ss.order));
+    const label = { 30: '30 s', 60: '1 min', 120: '2 min', 300: '5 min' }[ss.interval];
+    $('pkg-badge').textContent = label ? '▶ ' + label : '';
+    $('pkg-badge').hidden = !label;
   }
 
   // Rebuild at a new resolution once the size has settled, rather than on
@@ -594,6 +704,7 @@
     }
     if (!renderer) return;
 
+    runSlideshow(ts);
     followPointer(ts, dt);
     const ms = paint(ts);
     governor.sample(ms);
@@ -710,6 +821,10 @@
   $('prev').onclick = () => stepPackage(-1);
   $('next').onclick = () => stepPackage(1);
   $('pkg').onclick = () => openPicker(picker.hidden);
+  for (const b of document.querySelectorAll('[data-interval]'))
+    b.onclick = () => setSlideshow({ interval: Number(b.dataset.interval) });
+  for (const b of document.querySelectorAll('[data-order]'))
+    b.onclick = () => setSlideshow({ order: b.dataset.order });
   $('pick-all').onclick = () => {
     prefs.excluded = [];
     savePrefs();
@@ -995,6 +1110,7 @@
   window.addEventListener('resize', resize);
   resize();
   syncButtons();
+  syncSlideshow();
 
   async function start() {
     db = await Promise.race([openDb(), new Promise((r) => setTimeout(() => r(null), 1500))]);
@@ -1036,6 +1152,10 @@
       return packages.findIndex((p) => p.id.toLowerCase() === want ||
         prettyName(p).toLowerCase().replace(/ \*$/, '') === want);
     },
+    get transitioning() { return !!transition; },
+    // Pretend the current eye has been showing ms longer than it has.
+    slideshowSkip(ms) { slideClock -= ms; },
+    nextSlide(from) { return nextSlide(from); },
     names() { return packages.map((p) => ({ key: p.key, name: prettyName(p), included: isIncluded(p) })); },
   };
 })();

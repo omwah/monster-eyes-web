@@ -469,3 +469,100 @@ test('the eye picker: unchecked eyes are skipped by ◀ ▶, at least one stays 
   await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
   expect(await included()).toBe(25);
 });
+
+test('slideshow: the eyes blink across to the next after the interval; Always stays put', async ({ page }) => {
+  await open(page);
+  const key = () => app(page, 'monsterEyesApp.packageKey');
+  await page.click('#pkg');
+  await page.click('[data-interval="30"]');
+  await expect(page.locator('#pkg-badge')).toHaveText('▶ 30 s');
+  await page.keyboard.press('Escape');
+  const first = await key();
+  const second = await page.evaluate((k) => {
+    const n = monsterEyesApp.names();
+    return n[n.findIndex((x) => x.key === k) + 1].key;
+  }, first);
+  // 29 s in: nothing yet.
+  await page.evaluate(() => monsterEyesApp.slideshowSkip(29000));
+  await page.waitForTimeout(300);
+  expect(await key()).toBe(first);
+  // Past 30 s: watch the change frame by frame in the page. The outgoing
+  // eyes close, the swap happens as they meet, and the new eyes start shut.
+  const seen = await page.evaluate(() => new Promise((resolve) => {
+    const first = monsterEyesApp.packageKey;
+    let closed = 0;
+    monsterEyesApp.slideshowSkip(1500);
+    const end = performance.now() + 3000;
+    (function tick() {
+      const r = monsterEyesApp.renderer;
+      if (monsterEyesApp.packageKey === first) closed = Math.max(closed, r.eye[0].blinkFactor);
+      else return resolve({ closed, opening: r.eye[0].blinkFactor, key: monsterEyesApp.packageKey });
+      if (performance.now() < end) requestAnimationFrame(tick);
+      else resolve({ closed, opening: null, key: first });
+    })();
+  }));
+  expect(seen.key).toBe(second);
+  expect(seen.closed).toBeGreaterThan(0.85);
+  expect(seen.opening).toBeGreaterThan(0.8);
+  // Always: no change however long it has been.
+  await page.click('#pkg');
+  await page.click('[data-interval="0"]');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#pkg-badge')).toBeHidden();
+  const held = await key();
+  await page.evaluate(() => monsterEyesApp.slideshowSkip(600000));
+  await page.waitForTimeout(500);
+  expect(await key()).toBe(held);
+});
+
+test('slideshow: random order never repeats an eye straight away and skips unchecked ones', async ({ page }) => {
+  await open(page);
+  await page.click('#pkg');
+  await page.click('[data-order="random"]');
+  await page.locator('.pick-row').nth(3).locator('input').uncheck();
+  await page.locator('.pick-row').nth(7).locator('input').uncheck();
+  const names = await app(page, 'monsterEyesApp.names()');
+  const seq = await page.evaluate(() => {
+    const out = [];
+    let from = 0;
+    for (let i = 0; i < 100; i++) out.push((from = monsterEyesApp.nextSlide(from)));
+    return out;
+  });
+  for (let i = 1; i < seq.length; i++) expect(seq[i]).not.toBe(seq[i - 1]);
+  expect(seq).not.toContain(3);
+  expect(seq).not.toContain(7);
+  // The first round shows every other checked eye once before any repeats.
+  const firstRound = seq.slice(0, 23);
+  expect(new Set(firstRound).size).toBe(23);
+  expect(new Set(seq).size).toBe(names.length - 2);
+  // Remembered.
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  await page.click('#pkg');
+  await expect(page.locator('[data-order="random"]')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('slideshow: eyes without lids fade through black instead', async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => monsterEyesApp.select(monsterEyesApp.indexOf('sauron')));
+  expect(await app(page, 'monsterEyesApp.renderer.hasLids')).toBe(false);
+  await page.click('#pkg');
+  await page.click('[data-interval="30"]');
+  await page.keyboard.press('Escape');
+  const seen = await page.evaluate(() => new Promise((resolve) => {
+    const first = monsterEyesApp.packageKey, stage = document.getElementById('stage');
+    let lowest = 1;
+    monsterEyesApp.slideshowSkip(31000);
+    const end = performance.now() + 3000;
+    (function tick() {
+      lowest = Math.min(lowest, Number(stage.style.opacity || 1));
+      const done = monsterEyesApp.packageKey !== first && !monsterEyesApp.transitioning;
+      if (done || performance.now() > end)
+        return resolve({ lowest, changed: monsterEyesApp.packageKey !== first, opacity: stage.style.opacity });
+      requestAnimationFrame(tick);
+    })();
+  }));
+  expect(seen.changed).toBe(true);
+  expect(seen.lowest).toBeLessThan(0.2);
+  expect(seen.opacity).toBe('');
+});

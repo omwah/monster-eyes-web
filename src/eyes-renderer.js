@@ -961,6 +961,22 @@
       this.timeOfLastBlink = t;
     }
 
+    // Start with the lids shut and open them over durUs, as the second half
+    // of a blink; the next blink of its own comes a few seconds later. Used
+    // when one eye takes over from another.
+    openFromClosed(t, durUs) {
+      for (let e = 0; e < this.numEyes; e++) {
+        const E = this.eye[e];
+        E.blinkState = DEBLINK;
+        E.blinkStartTime = t;
+        E.blinkDuration = durUs;
+        E.blinkFactor = 1;
+      }
+      this.blinkExternal = false;
+      this.timeOfLastBlink = t;
+      this.timeToNextBlink = this.rng.random(1000000, 4000000);
+    }
+
     gazeY() {
       return this.gazeRadius <= 0 ? 0 : (this.frameEyeY - this.mapRadius) / this.gazeRadius;
     }

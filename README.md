@@ -35,6 +35,14 @@ pointer, so the screen shows only the eyes.
 | FPS | I | Frame-rate overlay: frame rate, slowest frame, time to draw the eyes, and their resolution. It stays up when the controls hide |
 | Add eyes… | | Pick an eye folder, or a folder of them, from the computer. Dropping folders on the page works too |
 
+**Slideshow.** At the bottom of the eye list, *Show each eye* sets how long
+each eye stays up: Always (no slideshow), 30 s, 1, 2 or 5 minutes. *Order*
+is down the list or Random, which shows every checked eye once before any
+comes round again and never shows the same eye twice in a row. Eyes close
+and the next ones open in their place; eyes without lids fade through black.
+Only checked eyes are shown, and choosing an eye yourself restarts the
+timer. While a slideshow runs, the eye button shows how long each eye stays.
+
 For a projector, press **F** for full screen, then drag and resize the eyes
 to fit the window or prop; with **Adjust separately**, each eye can have its
 own size and place. The page remembers the size, position, eye choice

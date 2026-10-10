@@ -19,10 +19,29 @@
       <button id="pick-none" title="Uncheck every eye but the one showing">None</button>
     </div>
     <ul id="pick-list"></ul>
+    <div class="pick-foot">
+      <div class="pick-setting">
+        <span class="label">Show each eye</span>
+        <div class="seg" role="group" aria-label="Show each eye for">
+          <button data-interval="0" title="Keep showing the same eye">Always</button>
+          <button data-interval="30">30 s</button>
+          <button data-interval="60">1 min</button>
+          <button data-interval="120">2 min</button>
+          <button data-interval="300">5 min</button>
+        </div>
+      </div>
+      <div class="pick-setting">
+        <span class="label">Order</span>
+        <div class="seg" role="group" aria-label="Slideshow order">
+          <button data-order="order" title="Down the list">In order</button>
+          <button data-order="random" title="Shuffled, with no eye twice in a row">Random</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="group">
     <button id="prev" class="icon" title="Previous eyes (←)" aria-label="Previous eyes">◀</button>
-    <button id="pkg" class="pkg" title="Choose eyes" aria-haspopup="true" aria-expanded="false"><span id="pkg-name">—</span> <span aria-hidden="true">▾</span></button>
+    <button id="pkg" class="pkg" title="Choose eyes" aria-haspopup="true" aria-expanded="false"><span id="pkg-name">—</span> <span id="pkg-badge" hidden></span> <span aria-hidden="true">▾</span></button>
     <button id="next" class="icon" title="Next eyes (→)" aria-label="Next eyes">▶</button>
   </div>
   <div class="group">

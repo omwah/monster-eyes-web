@@ -165,6 +165,17 @@ button.pkg {
 }
 .pick-name:hover { background: none; text-decoration: underline; }
 .pick-row.current .pick-name { color: var(--accent); font-weight: 600; }
+.pick-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+.pick-setting { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pick-setting .label { min-width: 88px; }
+.pick-setting .seg button { height: 28px; padding: 0 8px; font-size: 13px; }
+#pkg-badge { color: var(--accent); font-size: 12px; }
 
 .seg { display: inline-flex; border-radius: var(--radius); overflow: hidden; }
 .seg button { border-radius: 0; padding: 0 9px; }
