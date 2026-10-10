@@ -18,6 +18,11 @@
  *    a 30 Hz clock and is interpolated between steps.
  *  - A pair of eyes may each be given a small extra gaze offset, so they can
  *    converge on a pointer rather than look in parallel.
+ *  - The eyeball is not cut off at the edge of its square. Stock geometry has
+ *    an eye radius a little larger than half the square (125 against 120), so
+ *    the device shows a flat edge at each side; here the buffer is padded out
+ *    to hold the whole ball, and the lids carry on into the pad. Parity mode
+ *    has no pad.
  */
 (function (root) {
   'use strict';
@@ -36,6 +41,7 @@
   const HEAP = 8 * 1024 * 1024; // What the simulator's shim reports
   const HEAP_RESERVE = 10000;
   const IRIS_STEP_US = 1000000 / 30;
+  const OUTSIDE = -32768; // Displacement table: no eyeball here
 
   // ---------------------------------------------------------------------------
   //  The simulator's random(): a 32-bit xorshift, so a seeded run here walks
@@ -223,9 +229,18 @@
       }
       this.eyeOldX = this.eyeNewX = this.eyeOldY = this.eyeNewY = this.mapRadius;
       this.frameEyeX = this.frameEyeY = this.mapRadius;
+      // The buffer holds the square plus the pad on every side.
+      this.canvasSize = this.size + 2 * this.pad;
+      this.circleRadius = this.settings.eyeRadius + 1;
+      this.hasLids = false;
+      for (let x = 0; x < this.size; x++)
+        if (this.upperOpen[x] !== this.upperClosed[x] || this.lowerOpen[x] !== this.lowerClosed[x]) {
+          this.hasLids = true;
+          break;
+        }
       this.buffers = [];
       for (let e = 0; e < this.numEyes; e++)
-        this.buffers.push(new Uint32Array(this.size * this.size));
+        this.buffers.push(new Uint32Array(this.canvasSize * this.canvasSize));
       this.ready = true;
       return true;
     }
@@ -535,7 +550,7 @@
     }
 
     calcDisplacement() {
-      const half = this.settings.displaySize >> 1;
+      const half = (this.settings.displaySize >> 1) + this.pad;
       const d = (this.displace = new Int16Array(half * half));
       const eyeRadius2 = f32(this.settings.eyeRadius * this.settings.eyeRadius);
       const mapRadius = this.mapRadius;
@@ -554,7 +569,7 @@
             dx = f32(dx / dd);
             d[p++] = Math.trunc(f32(dx * pa)) - x;
           } else {
-            d[p++] = -1; // Outside the eye
+            d[p++] = OUTSIDE;
           }
         }
       }
@@ -641,6 +656,10 @@
       this.mapRadius = Math.trunc(f32(f32(f32(s.eyeRadius * f32(M_PI)) * s.coverage) + 0.5));
       this.mapDiameter = this.mapRadius * 2;
       if (this.mapRadius < 8) return false;
+      // Room outside the square for the rest of the eyeball, plus a margin
+      // so the clip circle has something to cut against.
+      const half = s.displaySize >> 1;
+      this.pad = this.parity ? 0 : Math.max(0, Math.ceil(s.eyeRadius - half)) + 2;
       this.calcMap();
       this.calcDisplacement();
       return true;
@@ -997,27 +1016,55 @@
       const rollSin = rolled ? Math.trunc(Math.sin(rollRad) * 32768) : 0;
       const rollCos = rolled ? Math.trunc(Math.cos(rollRad) * 32768) : 32768;
       const last = size - 1;
+      const pad = this.pad, W = size + 2 * pad, D = half + pad;
 
-      for (let x = 0; x < size; x++) {
-        const lidColumn = mirrorLids ? last - x : x;
-        let y1 = lowerClosed[lidColumn] +
-          Math.trunc(f32(0.5 + f32(lowerLidFactor * (lowerOpen[lidColumn] - lowerClosed[lidColumn]))));
-        let y2 = upperClosed[lidColumn] +
-          Math.trunc(f32(0.5 + f32(upperLidFactor * (upperOpen[lidColumn] - upperClosed[lidColumn]))));
-        if (y1 > last) y1 = last;
-        else if (y1 < 0) y1 = 0;
-        if (y2 > last) y2 = last;
-        else if (y2 < 0) y2 = 0;
+      // x and y are in the square's own coordinates; outside it, in the pad,
+      // they run negative or past the last column and row.
+      // Lid edges in one column of the lid tables, before any clamping.
+      const lowerAt = (c) => lowerClosed[c] +
+        Math.trunc(f32(0.5 + f32(lowerLidFactor * (lowerOpen[c] - lowerClosed[c]))));
+      const upperAt = (c) => upperClosed[c] +
+        Math.trunc(f32(0.5 + f32(upperLidFactor * (upperOpen[c] - upperClosed[c]))));
+      const SLOPE_SPAN = 4; // Columns over which the edge slope is measured
 
-        // out index of render row y in this column: (last - y) * size + x
-        let o = last * size + x;
-        if (y1 >= y2) {
-          for (let y = 0; y < size; y++, o -= size) out[o] = eyelidColor;
-          continue;
+      for (let x = -pad; x < size + pad; x++) {
+        let lidColumn = mirrorLids ? last - x : x;
+        let y1, y2;
+        if (lidColumn >= 0 && lidColumn <= last) {
+          y1 = lowerAt(lidColumn);
+          y2 = upperAt(lidColumn);
+          if (y1 > last) y1 = last;
+          else if (y1 < 0) y1 = 0;
+          if (y2 > last) y2 = last;
+          else if (y2 < 0) y2 = 0;
+        } else {
+          // Past the edge of the lid bitmaps: carry each lid on along the
+          // slope it has at the edge, so the opening keeps closing rather
+          // than running straight on. A lid absent at the edge stays absent.
+          const edge = lidColumn < 0 ? 0 : last;
+          const inner = lidColumn < 0 ? Math.min(SLOPE_SPAN, last) : Math.max(last - SLOPE_SPAN, 0);
+          const k = Math.abs(lidColumn - edge) / Math.max(1, Math.abs(edge - inner));
+          const l0 = lowerAt(edge), u0 = upperAt(edge);
+          y1 = l0 <= 0 ? 0 : Math.round(l0 + (l0 - lowerAt(inner)) * k);
+          y2 = u0 >= last ? last : Math.round(u0 + (u0 - upperAt(inner)) * k);
+          if (y1 < 0) y1 = 0;
+          if (y2 > last) y2 = last;
         }
 
-        let y = 0;
-        for (; y < y1; y++, o -= size) out[o] = eyelidColor;
+        // Buffer index of render row y in this column: rows are stored top
+        // first, and render y counts up from the bottom.
+        let o = (W - 1) * W + (x + pad);
+        if (y1 >= y2) {
+          for (let y = -pad; y < size + pad; y++, o -= W) out[o] = eyelidColor;
+          continue;
+        }
+        // A lid that is out of the way at the edge of the square stays out of
+        // the way in the pad.
+        if (y1 === 0) y1 = -pad;
+        if (y2 === last) y2 = last + pad;
+
+        let y = -pad;
+        for (; y < y1; y++, o -= W) out[o] = eyelidColor;
 
         let dxBase, xmul;
         if (x < half) {
@@ -1027,10 +1074,10 @@
           dxBase = x - half;
           xmul = 1;
         }
-        const dyBase = dxBase * half;
+        const dyBase = dxBase * D;
         const xx = xPositionOverMap + x;
 
-        for (; y <= y2; y++, o -= size) {
+        for (; y <= y2; y++, o -= W) {
           const yy = yPositionOverMap + y;
           let doff, dy;
           if (y < half) {
@@ -1040,8 +1087,8 @@
             doff = y - half;
             dy = displace[dyBase + doff];
           }
-          let dx = displace[doff * half + dxBase];
-          if (dx < 0) {
+          let dx = displace[doff * D + dxBase];
+          if (dx === OUTSIDE) {
             out[o] = eyelidColor; // Outside the eyeball
             continue;
           }
@@ -1122,7 +1169,7 @@
           }
         }
 
-        for (; y < size; y++, o -= size) out[o] = eyelidColor;
+        for (; y < size + pad; y++, o -= W) out[o] = eyelidColor;
       }
     }
 

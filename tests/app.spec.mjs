@@ -29,10 +29,12 @@ test.beforeAll(() => {
     throw new Error('Run python3 tools/build.py first');
 });
 
-test('opens from file:// and draws every bundled package on its own background', async ({ page }) => {
+test('opens from file:// and draws every bundled package as circles on black', async ({ page }) => {
   const errors = await open(page);
   const n = await app(page, 'monsterEyesApp.packageCount');
   expect(n).toBe(26);
+  const BLACK = [0, 0, 0];
+  const dark = (p) => p.every((v) => v <= 8);
   for (let i = 0; i < n; i++) {
     // Hold the eye still, looking ahead with its lids open: a lid that
     // tracks a downward glance, or a blink, can legitimately cover it.
@@ -47,26 +49,58 @@ test('opens from file:// and draws every bundled package on its own background',
     await page.waitForTimeout(250);
     const info = await page.evaluate(() => {
       const r = monsterEyesApp.renderer;
-      return { key: monsterEyesApp.packageKey, bg: r.background().css, eyes: r.numEyes, warnings: r.warnings,
-               rects: monsterEyesApp.layout() };
+      return { key: monsterEyesApp.packageKey, warnings: r.warnings, rects: monsterEyesApp.layout() };
     });
-    const want = info.bg.match(/\d+/g).map(Number);
     const pixel = await snapshot(page);
-    // Every corner of the window is the package's eyelid colour.
+    // The window is black everywhere outside the eyes.
     for (const [x, y] of [[2, 2], [1277, 2], [2, 717], [1277, 717]])
-      expect(pixel(x, y), `${info.key} corner ${x},${y}`).toEqual(want);
-    // And the eyes themselves are not just background.
-    let differs = 0;
+      expect(pixel(x, y), `${info.key} corner ${x},${y}`).toEqual(BLACK);
+    const inAnyEye = (x, y) => info.rects.some((r) => Math.hypot(x - r.x, y - r.y) <= r.radius + 2);
+    for (const r of info.rects)
+      for (let a = 0; a < 8; a++) {
+        const x = r.x + Math.cos((a * Math.PI) / 4) * (r.radius + 6);
+        const y = r.y + Math.sin((a * Math.PI) / 4) * (r.radius + 6);
+        if (x < 0 || y < 0 || x > 1279 || y > 719 || inAnyEye(x, y)) continue;
+        expect(dark(pixel(x, y)), `${info.key} just outside the circle at ${a * 45} degrees`).toBe(true);
+      }
+    // And the eyes themselves are not just black.
+    let lit = 0;
     for (const r of info.rects)
       for (let j = -3; j <= 3; j++)
         for (let k = -3; k <= 3; k++) {
-          const p = pixel(r.x + (k * r.size) / 9, r.y + (j * r.size) / 9);
-          if (p.some((v, c) => Math.abs(v - want[c]) > 8)) differs++;
+          const x = r.x + (k * r.radius) / 4, y = r.y + (j * r.radius) / 4;
+          if (Math.hypot(x - r.x, y - r.y) < r.radius - 2 && !dark(pixel(x, y))) lit++;
         }
-    expect(differs, `${info.key} draws something`).toBeGreaterThan(3);
+    expect(lit, `${info.key} draws something`).toBeGreaterThan(3);
     expect(info.warnings, info.key).toEqual([]);
   }
   expect(errors).toEqual([]);
+});
+
+test('the eyeball is drawn whole, not cut off at the sides of its square', async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => {
+    const o = [...document.querySelectorAll('#pkg option')].find((o) => o.textContent === 'Anime');
+    monsterEyesApp.select(Number(o.value));
+    const r = monsterEyesApp.renderer;
+    r.autoBlink = false;
+    r.autoGaze = false;
+    r.setScreenGaze(0, 0);
+    for (const E of r.eye) { E.blinkState = 0; E.blinkFactor = 0; }
+  });
+  await page.waitForTimeout(300);
+  const rects = await app(page, 'monsterEyesApp.layout()');
+  const pixel = await snapshot(page);
+  for (const r of rects) {
+    // The eyeball reaches past the edge of the square it is laid out in.
+    expect(r.radius).toBeGreaterThan(r.size / 2);
+    for (const side of [-1, 1]) {
+      const inside = pixel(r.x + side * (r.radius - 4), r.y);
+      const outside = pixel(r.x + side * (r.radius + 4), r.y);
+      expect(inside.some((v) => v > 8), `side ${side} inside the ball`).toBe(true);
+      expect(outside.every((v) => v <= 8), `side ${side} past the ball`).toBe(true);
+    }
+  }
 });
 
 test('eye count: Auto follows the package, 1 and 2 override it', async ({ page }) => {

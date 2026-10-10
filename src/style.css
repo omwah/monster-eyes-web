@@ -15,7 +15,7 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #000; /* Replaced by the package's eyelid colour at runtime */
+  background: #000; /* Always black: best for projecting */
   font: 14px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--bar-fg);
   -webkit-user-select: none;

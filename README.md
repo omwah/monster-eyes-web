@@ -37,8 +37,8 @@ to fit the window or prop. The page remembers the size, position, eye choice
 and settings for next time. While it is open it keeps the screen from going to
 sleep.
 
-The background is each package's eyelid colour. Most packages are black; Anime,
-for one, is a skin tone.
+The background is always black, which is what a projector wants. Each eye is
+drawn as a whole ball, cut to a circle, so nothing but the eye throws light.
 
 ## Eye packages
 
@@ -98,7 +98,8 @@ pixel-identical.
 
 `npm test` opens `dist/monster-eyes.html` from disk in headless Chromium and
 checks:
-- every package draws, on its own background colour
+- every package draws as circles on black, with the eyeball whole rather than
+  cut off at the sides
 - Auto / 1 / 2
 - following the pointer and converging on it
 - the controls hiding when idle

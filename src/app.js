@@ -242,16 +242,17 @@
     eyeImages = [];
     for (let e = 0; e < r.numEyes; e++) {
       const c = document.createElement('canvas');
-      c.width = c.height = r.size;
+      c.width = c.height = r.canvasSize;
+      // Everything outside the eyeball's circle stays black.
+      c.style.clipPath = 'circle(' + ((100 * r.circleRadius) / r.canvasSize).toFixed(3) + '% at 50% 50%)';
       c.className = 'eye';
       stage.appendChild(c);
       eyeCanvases.push(c);
       eyeContexts.push(c.getContext('2d', { alpha: false }));
-      eyeImages.push(new ImageData(new Uint8ClampedArray(r.buffers[e].buffer), r.size, r.size));
+      eyeImages.push(new ImageData(new Uint8ClampedArray(r.buffers[e].buffer), r.canvasSize, r.canvasSize));
     }
     placed = '';
     background = r.background();
-    document.body.style.background = background.css;
     $('pkg').value = String(index);
     if (r.warnings.length) toast(prettyName(entry.label) + ': ' + r.warnings[0]);
     governor.reset();
@@ -310,7 +311,7 @@
     const rects = layoutFor(renderer.numEyes);
     for (let e = rects.length - 1; e >= 0; e--) {
       const r = rects[e];
-      if (Math.abs(x - r.x) <= r.size / 2 && Math.abs(y - r.y) <= r.size / 2) return e;
+      if (Math.hypot(x - r.x, y - r.y) <= onScreen(r).radius) return e;
     }
     return -1;
   }
@@ -441,6 +442,13 @@
   const fpsMeter = { frames: 0, since: 0, text: '' };
 
   // Position the eye canvases; only touches the DOM when something moved.
+  // Where an eye's canvas and circle land on screen. rect.size is the eye's
+  // square; the canvas is larger by the renderer's pad on each side.
+  function onScreen(rect) {
+    const k = rect.size / renderer.size;
+    return { canvas: renderer.canvasSize * k, radius: renderer.circleRadius * k };
+  }
+
   function place() {
     const rects = layoutFor(renderer.numEyes);
     const key = rects.map((r) => r.x.toFixed(1) + ',' + r.y.toFixed(1) + ',' + r.size.toFixed(1)).join(';');
@@ -448,8 +456,9 @@
     placed = key;
     rects.forEach((r, e) => {
       const st = eyeCanvases[e].style;
-      st.width = st.height = r.size + 'px';
-      st.transform = 'translate(' + (r.x - r.size / 2) + 'px,' + (r.y - r.size / 2) + 'px)';
+      const c = onScreen(r).canvas;
+      st.width = st.height = c + 'px';
+      st.transform = 'translate(' + (r.x - c / 2) + 'px,' + (r.y - c / 2) + 'px)';
     });
   }
 
@@ -850,7 +859,7 @@
     get background() { return background.css; },
     get prefs() { return JSON.parse(JSON.stringify(prefs)); },
     get wakeLocked() { return !!wakeLock || !!(wakeVideo && !wakeVideo.paused); },
-    layout() { return renderer ? layoutFor(renderer.numEyes) : []; },
+    layout() { return renderer ? layoutFor(renderer.numEyes).map((r) => ({ ...r, radius: onScreen(r).radius })) : []; },
     select(i) { selectPackage(i); },
   };
 })();
