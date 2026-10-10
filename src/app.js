@@ -33,6 +33,7 @@
     follow: true,
     separate: false,
     showFps: false,
+    excluded: [], // Keys of eyes left out of ◀ ▶ and the slideshow
     layouts: { 1: freshLayout(), 2: freshLayout() },
   };
   try {
@@ -48,6 +49,7 @@
           Array.isArray(l.off) && l.off.length === 2;
         if (!ok) prefs.layouts[n] = freshLayout();
       }
+      if (!Array.isArray(prefs.excluded)) prefs.excluded = [];
     }
   } catch (e) { /* No storage: defaults it is */ }
 
@@ -96,31 +98,94 @@
     return { id: entry.id, files: entry.files };
   }
 
-  function prettyName(id) {
-    return id.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const isAdded = (p) => p.source === 'added';
+  // Built-in and imported eyes side by side; only then is it worth marking
+  // which is which.
+  const mixed = () => packages.some(isAdded) && packages.some((p) => !isAdded(p));
+  const isIncluded = (p) => !prefs.excluded.includes(p.key);
+
+  // "big_blue" -> "Big Blue". An imported eye gets " *" when the list mixes
+  // built-in and imported eyes, so it can be told apart however it is reached.
+  function prettyName(entry) {
+    const base = entry.label.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    return isAdded(entry) && mixed() ? base + ' *' : base;
   }
 
+  // ---------------------------------------------------------------------------
+  //  The eye picker: a list with a checkbox per eye. Unchecked eyes are skipped
+  //  by ◀ ▶ and the slideshow, but can still be shown by clicking their name.
+  // ---------------------------------------------------------------------------
+
+  const picker = $('picker');
+
   function refreshPicker() {
-    const sel = $('pkg');
-    sel.textContent = '';
-    const groups = { bundled: null, added: null };
-    if (packages.some((p) => p.source === 'added')) {
-      groups.bundled = document.createElement('optgroup');
-      groups.bundled.label = 'Included';
-      groups.added = document.createElement('optgroup');
-      groups.added.label = 'Added';
-    }
+    const list = $('pick-list');
+    const focused = picker.contains(document.activeElement) && document.activeElement.closest('.pick-row');
+    const focusIndex = focused ? Number(focused.dataset.index) : -1;
+    list.textContent = '';
+    const grouped = mixed();
+    let lastSource = null;
     packages.forEach((p, i) => {
-      const o = document.createElement('option');
-      o.value = String(i);
-      o.textContent = prettyName(p.label);
-      (groups[p.source] || sel).appendChild(o);
+      if (grouped && p.source !== lastSource) {
+        const head = document.createElement('li');
+        head.className = 'pick-group';
+        head.textContent = isAdded(p) ? 'Added' : 'Included';
+        list.appendChild(head);
+        lastSource = p.source;
+      }
+      const name = prettyName(p);
+      const row = document.createElement('li');
+      row.className = 'pick-row' + (i === current ? ' current' : '');
+      row.dataset.index = String(i);
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = isIncluded(p);
+      cb.tabIndex = -1;
+      cb.title = 'Include in ◀ ▶ and the slideshow';
+      cb.setAttribute('aria-label', 'Include ' + name);
+      cb.onchange = () => setIncluded(i, cb.checked);
+      const btn = document.createElement('button');
+      btn.className = 'pick-name';
+      btn.textContent = name;
+      btn.title = 'Show ' + name;
+      if (i === current) btn.setAttribute('aria-current', 'true');
+      btn.onclick = () => selectPackage(i);
+      row.append(cb, btn);
+      list.appendChild(row);
     });
-    if (groups.bundled) {
-      if (groups.bundled.children.length) sel.appendChild(groups.bundled);
-      sel.appendChild(groups.added);
+    const included = packages.filter(isIncluded).length;
+    $('pick-count').textContent = included + ' of ' + packages.length + ' in rotation';
+    $('pkg-name').textContent = current >= 0 && packages[current] ? prettyName(packages[current]) : '—';
+    if (focusIndex >= 0) {
+      const again = list.querySelector('.pick-row[data-index="' + focusIndex + '"] .pick-name');
+      if (again) again.focus();
     }
-    if (current >= 0) sel.value = String(current);
+  }
+
+  function setIncluded(index, on) {
+    const key = packages[index].key;
+    if (!on && !packages.some((p, j) => j !== index && isIncluded(p))) {
+      toast('At least one eye has to stay checked');
+      refreshPicker();
+      return;
+    }
+    prefs.excluded = prefs.excluded.filter((k) => k !== key);
+    if (!on) prefs.excluded.push(key);
+    savePrefs();
+    refreshPicker();
+  }
+
+  function openPicker(open) {
+    picker.hidden = !open;
+    $('pkg').setAttribute('aria-expanded', String(open));
+    if (open) {
+      refreshPicker();
+      const cur = picker.querySelector('.pick-row.current .pick-name') || picker.querySelector('.pick-name');
+      if (cur) {
+        cur.focus();
+        cur.scrollIntoView({ block: 'nearest' });
+      }
+    }
   }
 
   // ===========================================================================
@@ -201,7 +266,7 @@
     try {
       pkg = materialize(entry);
     } catch (e) {
-      toast('Could not read “' + entry.label + '”: ' + e.message);
+      toast('Could not read “' + prettyName(entry) + '”: ' + e.message);
       return;
     }
     const want = wantedEyes();
@@ -219,7 +284,7 @@
       }
     }
     if (!r.ready) {
-      toast('Could not draw “' + entry.label + '”: ' + (r.error || 'unknown problem'));
+      toast('Could not draw “' + prettyName(entry) + '”: ' + (r.error || 'unknown problem'));
       return;
     }
     // Rebuilding the same package at another resolution should not show: keep
@@ -260,8 +325,8 @@
     }
     placed = '';
     background = r.background();
-    $('pkg').value = String(index);
-    if (r.warnings.length) toast(prettyName(entry.label) + ': ' + r.warnings[0]);
+    refreshPicker();
+    if (r.warnings.length) toast(prettyName(entry) + ': ' + r.warnings[0]);
     governor.reset();
     paint(performance.now());
   }
@@ -272,7 +337,20 @@
     build(index);
     prefs.pkg = packages[current] ? packages[current].key : null;
     savePrefs();
-    if (announce) toast(prettyName(packages[current].label), 1500);
+    if (announce) toast(prettyName(packages[current]), 1500);
+  }
+
+  // The next or previous eye that is checked, skipping unchecked ones.
+  function stepPackage(dir, announce) {
+    const n = packages.length;
+    for (let k = 1; k < n; k++) {
+      const i = (((current + dir * k) % n) + n) % n;
+      if (isIncluded(packages[i])) {
+        selectPackage(i, announce);
+        return;
+      }
+    }
+    if (!isIncluded(packages[current])) toast('No other eyes are checked', 1500);
   }
 
   // Rebuild at a new resolution once the size has settled, rather than on
@@ -566,7 +644,7 @@
   }
   function goIdle() {
     // Not while the viewer is using the bar.
-    if ($('bar').matches(':hover') || (document.activeElement && document.activeElement.tagName === 'SELECT')) {
+    if ($('bar').matches(':hover') || !picker.hidden) {
       idleTimer = setTimeout(goIdle, IDLE_MS);
       return;
     }
@@ -629,12 +707,49 @@
   document.addEventListener('fullscreenchange', () => { syncButtons(); keepAwake(); });
   document.addEventListener('webkitfullscreenchange', () => { syncButtons(); keepAwake(); });
 
-  $('prev').onclick = () => selectPackage(current - 1);
-  $('next').onclick = () => selectPackage(current + 1);
-  $('pkg').onchange = (ev) => {
-    selectPackage(Number(ev.target.value));
-    ev.target.blur();
+  $('prev').onclick = () => stepPackage(-1);
+  $('next').onclick = () => stepPackage(1);
+  $('pkg').onclick = () => openPicker(picker.hidden);
+  $('pick-all').onclick = () => {
+    prefs.excluded = [];
+    savePrefs();
+    refreshPicker();
   };
+  $('pick-none').onclick = () => {
+    // Everything but the eye showing, since one has to stay checked.
+    prefs.excluded = packages.filter((p, i) => i !== current).map((p) => p.key);
+    savePrefs();
+    refreshPicker();
+  };
+  // Close on a press anywhere outside the picker and its button.
+  document.addEventListener('pointerdown', (ev) => {
+    if (!picker.hidden && !picker.contains(ev.target) && !$('pkg').contains(ev.target)) openPicker(false);
+  }, true);
+  // Keys inside the list: ↑ ↓ move, Space checks or unchecks, Enter shows,
+  // Esc closes. They stay in the list rather than reaching the page.
+  picker.addEventListener('keydown', (ev) => {
+    const names = [...picker.querySelectorAll('.pick-name')];
+    const at = names.indexOf(document.activeElement);
+    const k = ev.key;
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      const next = names[Math.max(0, Math.min(names.length - 1, at + (k === 'ArrowDown' ? 1 : -1)))];
+      if (next) {
+        next.focus();
+        next.scrollIntoView({ block: 'nearest' });
+      }
+    } else if (k === ' ' && at >= 0) {
+      const row = names[at].closest('.pick-row');
+      setIncluded(Number(row.dataset.index), !isIncluded(packages[Number(row.dataset.index)]));
+    } else if (k === 'Escape') {
+      openPicker(false);
+      $('pkg').focus();
+    } else if (k !== 'Enter' && k !== 'Tab') {
+      return;
+    }
+    if (k !== 'Enter' && k !== 'Tab') ev.preventDefault();
+    ev.stopPropagation();
+    wake();
+  });
   $('count-auto').onclick = () => setEyes('auto');
   $('count-1').onclick = () => setEyes(1);
   $('count-2').onclick = () => setEyes(2);
@@ -654,11 +769,11 @@
   document.addEventListener('keydown', (ev) => {
     wake();
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
-    if (ev.target && ev.target.tagName === 'SELECT' && /^Arrow/.test(ev.key)) return;
+    if (picker.contains(ev.target)) return;
     const k = ev.key;
     let handled = true;
-    if (k === 'ArrowRight' || k === 'PageDown') selectPackage(current + 1, true);
-    else if (k === 'ArrowLeft' || k === 'PageUp') selectPackage(current - 1, true);
+    if (k === 'ArrowRight' || k === 'PageDown') stepPackage(1, true);
+    else if (k === 'ArrowLeft' || k === 'PageUp') stepPackage(-1, true);
     else if (k === ' ' || k === 'b' || k === 'B') blinkNow();
     else if (k === 'a' || k === 'A') setEyes('auto');
     else if (k === '1') setEyes(1);
@@ -915,5 +1030,12 @@
     get wakeLocked() { return !!wakeLock || !!(wakeVideo && !wakeVideo.paused); },
     layout() { return renderer ? layoutFor(renderer.numEyes).map((r) => ({ ...r, radius: onScreen(r).radius })) : []; },
     select(i) { selectPackage(i); },
+    // Index of an eye by its id ("big_blue") or its shown name ("Big Blue").
+    indexOf(name) {
+      const want = String(name).toLowerCase().replace(/ \*$/, '');
+      return packages.findIndex((p) => p.id.toLowerCase() === want ||
+        prettyName(p).toLowerCase().replace(/ \*$/, '') === want);
+    },
+    names() { return packages.map((p) => ({ key: p.key, name: prettyName(p), included: isIncluded(p) })); },
   };
 })();

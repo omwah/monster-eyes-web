@@ -20,7 +20,8 @@ pointer, so the screen shows only the eyes.
 
 | Control | Key | |
 |---|---|---|
-| ◀ / list / ▶ | ← → | Choose the eyes |
+| ◀ ▶ | ← → | The previous or next eye, skipping unchecked ones |
+| Eye name ▾ | | Opens the list of eyes. Click a name to show it. Uncheck an eye to leave it out of ◀ ▶ and the slideshow; All and None check or uncheck the lot, and one always stays checked. In the list, ↑ ↓ move, Space checks, Enter shows, Esc closes. Imported eyes are marked `*` when built-in ones are listed too |
 | Eyes: Auto · 1 · 2 | A, 1, 2 | Auto shows one or two eyes, as each eye package prefers |
 | − / + | − / +, mouse wheel | Smaller / bigger |
 | Drag an eye | | Moves the pair |

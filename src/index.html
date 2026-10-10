@@ -12,9 +12,17 @@
 <div id="stage"><div id="ring"></div></div>
 
 <div id="bar" role="toolbar" aria-label="Eye controls">
+  <div id="picker" role="dialog" aria-label="Eyes" hidden>
+    <div class="pick-head">
+      <span id="pick-count"></span>
+      <button id="pick-all" title="Check every eye">All</button>
+      <button id="pick-none" title="Uncheck every eye but the one showing">None</button>
+    </div>
+    <ul id="pick-list"></ul>
+  </div>
   <div class="group">
     <button id="prev" class="icon" title="Previous eyes (←)" aria-label="Previous eyes">◀</button>
-    <select id="pkg" title="Choose eyes" aria-label="Choose eyes"></select>
+    <button id="pkg" class="pkg" title="Choose eyes" aria-haspopup="true" aria-expanded="false"><span id="pkg-name">—</span> <span aria-hidden="true">▾</span></button>
     <button id="next" class="icon" title="Next eyes (→)" aria-label="Next eyes">▶</button>
   </div>
   <div class="group">

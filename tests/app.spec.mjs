@@ -81,8 +81,7 @@ test('opens from file:// and draws every bundled package as circles on black', a
 test('the eyeball is drawn whole, not cut off at the sides of its square', async ({ page }) => {
   await open(page);
   await page.evaluate(() => {
-    const o = [...document.querySelectorAll('#pkg option')].find((o) => o.textContent === 'Anime');
-    monsterEyesApp.select(Number(o.value));
+    monsterEyesApp.select(monsterEyesApp.indexOf('anime'));
     const r = monsterEyesApp.renderer;
     r.autoBlink = false;
     r.autoGaze = false;
@@ -106,10 +105,7 @@ test('the eyeball is drawn whole, not cut off at the sides of its square', async
 
 test('eye count: Auto follows the package, 1 and 2 override it', async ({ page }) => {
   await open(page);
-  const idx = (id) => page.evaluate((id) => {
-    const opts = [...document.querySelectorAll('#pkg option')];
-    return Number(opts.find((o) => o.textContent.toLowerCase() === id).value);
-  }, id);
+  const idx = (id) => page.evaluate((id) => monsterEyesApp.indexOf(id), id);
   const sauron = await idx('sauron'), deer = await idx('deer');
   await page.evaluate((i) => monsterEyesApp.select(i), sauron);
   expect(await app(page, 'monsterEyesApp.renderer.numEyes')).toBe(1);
@@ -239,7 +235,12 @@ test('Add eyes… takes a single package folder or a folder of them', async ({ p
   expect(await app(page, 'monsterEyesApp.renderer.warnings')).toEqual([]);
   await page.setInputFiles('#folder', path.join(ROOT, 'eyes'));
   await page.waitForFunction(() => monsterEyesApp.packageCount === 52);
-  expect(await page.locator('#pkg optgroup[label="Added"] option').count()).toBe(26);
+  // Imported eyes carry a * next to the built-in ones of the same name.
+  const names = await app(page, 'monsterEyesApp.names()');
+  const added = names.filter((n) => n.key.startsWith('added:'));
+  expect(added.length).toBe(26);
+  expect(added.every((n) => n.name.endsWith(' *'))).toBe(true);
+  expect(names.filter((n) => n.key.startsWith('bundled:')).some((n) => n.name.endsWith('*'))).toBe(false);
 });
 
 test('performance: two eyes at 1920x1080 hold 60 fps', async ({ page }) => {
@@ -278,8 +279,7 @@ test('performance: two eyes at 1920x1080 hold 60 fps', async ({ page }) => {
 
 test('a rebuilt eye is drawn before it is shown, and does not blink', async ({ page }) => {
   await open(page);
-  const anime = await page.evaluate(() =>
-    Number([...document.querySelectorAll('#pkg option')].find((o) => o.textContent === 'Anime').value));
+  const anime = await page.evaluate(() => monsterEyesApp.indexOf('anime'));
   await page.evaluate((i) => monsterEyesApp.select(i), anime);
   await page.waitForTimeout(500); // Past the blink a freshly chosen eye opens with
   // Rebuilding in place, as the resolution governor and resizing do. Read the
@@ -287,7 +287,7 @@ test('a rebuilt eye is drawn before it is shown, and does not blink', async ({ p
   const res = await page.evaluate(() => {
     const r0 = monsterEyesApp.renderer;
     r0.eye.forEach((E) => { E.blinkState = 0; E.blinkFactor = 0; });
-    monsterEyesApp.select(Number(document.getElementById('pkg').value));
+    monsterEyesApp.select(monsterEyesApp.indexOf('anime'));
     const c = document.querySelector('#stage canvas');
     return { corner: Array.from(c.getContext('2d').getImageData(1, 1, 1, 1).data.slice(0, 3)),
              bg: monsterEyesApp.background, replaced: monsterEyesApp.renderer !== r0,
@@ -328,8 +328,8 @@ test('lids kept in another folder are bundled with the package that uses them', 
   await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
   const result = await page.evaluate(() => {
     const out = {};
-    for (const o of document.querySelectorAll('#pkg option')) {
-      monsterEyesApp.select(Number(o.value));
+    for (let i = 0; i < monsterEyesApp.packageCount; i++) {
+      monsterEyesApp.select(i);
       const r = monsterEyesApp.renderer;
       out[monsterEyesApp.packageKey] = { warnings: r.warnings, hasLids: r.hasLids };
     }
@@ -346,8 +346,7 @@ test('Add eyes… finds lids in a folder beside the eyes, and says when they are
   await page.waitForFunction(() => monsterEyesApp.packageCount === 29);
   for (const id of ['shared_lids', 'borrower']) {
     const r = await page.evaluate((id) => {
-      const o = [...document.querySelectorAll('#pkg option')].find((o) => o.textContent.toLowerCase().startsWith(id.replace('_', ' ')));
-      monsterEyesApp.select(Number(o.value));
+      monsterEyesApp.select(monsterEyesApp.indexOf(id));
       return { key: monsterEyesApp.packageKey, warnings: monsterEyesApp.renderer.warnings, hasLids: monsterEyesApp.renderer.hasLids };
     }, id);
     expect(r, id).toEqual({ key: 'added:' + id, warnings: [], hasLids: true });
@@ -420,4 +419,53 @@ test('a layout saved by an earlier version, with one size for both eyes, still l
   const now = await app(page, 'monsterEyesApp.layout()');
   expect(now[0].size).toBeCloseTo(fitted[0].size * 0.5, 1);
   expect(now[1].size).toBeCloseTo(fitted[1].size * 0.5, 1);
+});
+
+test('the eye picker: unchecked eyes are skipped by ◀ ▶, at least one stays checked', async ({ page }) => {
+  await open(page);
+  const key = () => app(page, 'monsterEyesApp.packageKey');
+  const included = async () => (await app(page, 'monsterEyesApp.names()')).filter((n) => n.included).length;
+  await page.click('#pkg');
+  await expect(page.locator('#picker')).toBeVisible();
+  await expect(page.locator('.pick-row')).toHaveCount(26);
+  await expect(page.locator('.pick-row.current .pick-name')).toHaveText('Anime');
+  await expect(page.locator('#pkg-name')).toHaveText('Anime');
+  // Uncheck the next two eyes; ▶ goes past them.
+  await page.locator('.pick-row').nth(1).locator('input').uncheck();
+  await page.locator('.pick-row').nth(2).locator('input').uncheck();
+  expect(await included()).toBe(24);
+  await expect(page.locator('#pick-count')).toHaveText('24 of 26 in rotation');
+  const third = await page.evaluate(() => monsterEyesApp.names()[3].key);
+  await page.click('#next');
+  expect(await key()).toBe(third);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ArrowLeft');
+  expect(await key()).toBe('bundled:anime');
+  // Clicking an unchecked eye's name still shows it.
+  await page.click('#pkg');
+  await page.locator('.pick-row').nth(1).locator('.pick-name').click();
+  expect(await key()).toBe(await page.evaluate(() => monsterEyesApp.names()[1].key));
+  // None leaves just the eye showing; it can't be unchecked.
+  await page.click('#pick-none');
+  expect(await included()).toBe(1);
+  const only = page.locator('.pick-row.current input');
+  await expect(only).toBeChecked();
+  await only.click();
+  await expect(only).toBeChecked();
+  await expect(page.locator('#toast')).toContainText('At least one eye');
+  // Keyboard in the list: ↓ then Space checks the next eye.
+  await page.locator('.pick-row.current .pick-name').focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press(' ');
+  expect(await included()).toBe(2);
+  // The controls stay up while the picker is open.
+  await page.waitForTimeout(3600);
+  await expect(page.locator('body')).not.toHaveClass(/idle/);
+  await page.click('#pick-all');
+  expect(await included()).toBe(26);
+  await page.locator('.pick-row').nth(5).locator('input').uncheck();
+  // Remembered.
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  expect(await included()).toBe(25);
 });
