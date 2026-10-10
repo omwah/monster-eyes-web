@@ -5,6 +5,9 @@ is a browser port of Adafruit's Monster Eyes, with some extensions: slit and
 bar-shaped pupils, rolling eyeballs, flowing irises, single-eye packages and
 more, all set from each package's `config.eye`.
 
+**Try it: https://omwah.github.io/monster-eyes-web/**. That page is rebuilt
+and republished from `main` on every push.
+
 **The finished thing is one file: `dist/monster-eyes.html`.** It holds the
 code and all 26 eye packages. Double-click it, or copy it to a USB stick or
 attach it to an email. It needs no internet, no install and no web server.
