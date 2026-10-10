@@ -26,6 +26,94 @@ SRC = ROOT / "src"
 KEEP = (".eye", ".bmp")
 
 
+ASSET_KEYS = ("irisTexture", "scleraTexture", "upperEyelid", "lowerEyelid")
+
+
+def strip_comments(text: str) -> str:
+    """Drop // and /* */ comments from config.eye, leaving strings alone."""
+    out, i, n, quote = [], 0, len(text), None
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+            out.append(c)
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def asset_refs(config_text: str):
+    """Every texture and eyelid name a config mentions, root or per-eye."""
+    text = strip_comments(config_text)
+    pattern = r"[\"']?(%s)[\"']?\s*:\s*[\"']([^\"']+)[\"']" % "|".join(ASSET_KEYS)
+    return sorted({m.group(2) for m in re.finditer(pattern, text)})
+
+
+def normalize(path: str) -> str:
+    """Forward slashes, no "." segments, ".." folded where it can be."""
+    out = []
+    for part in path.replace("\\", "/").split("/"):
+        if not part or part == ".":
+            continue
+        if part == ".." and out and out[-1] != "..":
+            out.pop()
+        else:
+            out.append(part)
+    return "/".join(out)
+
+
+def package_relative(ref: str, pkg_id: str) -> str:
+    """The name the renderer looks a file up by, as copyAssetPath() makes it:
+    relative to the package, with a leading "<pkg_id>/" dropped."""
+    if ref.startswith("/"):
+        return normalize(ref)
+    head, sep, rest = ref.partition("/")
+    if sep and head == pkg_id:
+        ref = rest
+    return normalize(ref)
+
+
+def external_assets(pkg_dir: Path, eyes_dir: Path, have: set):
+    """Files a package's config names from outside its own folder, keyed by the
+    name the renderer will look for. Tried against the package directory (so
+    ".." works), then the directory holding the packages (Adafruit's
+    "demon/upper.bmp"), then the eyes root. Nothing outside the eyes root is
+    taken. Returns (found, missing)."""
+    found, missing = {}, []
+    root = eyes_dir.resolve()
+    for ref in asset_refs((pkg_dir / "config.eye").read_text(encoding="utf-8", errors="replace")):
+        rel = package_relative(ref, pkg_dir.name)
+        if rel.lower() in have:
+            continue
+        hit = None
+        for base in (pkg_dir, pkg_dir.parent, eyes_dir):
+            cand = (base / rel).resolve()
+            if cand.is_file() and cand.is_relative_to(root) and cand.suffix.lower() in KEEP:
+                hit = cand
+                break
+        if hit:
+            found[rel] = hit
+        else:
+            missing.append(ref)
+    return found, missing
+
+
 def find_packages(eyes_dir: Path):
     packages = []
     for config in sorted(eyes_dir.rglob("config.eye")):
@@ -41,6 +129,12 @@ def find_packages(eyes_dir: Path):
             if any((pkg_dir / p / "config.eye").exists() for p in rel.parents if str(p) != "."):
                 continue
             files[rel.as_posix()] = base64.b64encode(f.read_bytes()).decode("ascii")
+        # Lids or textures kept in another folder travel with the package.
+        found, missing = external_assets(pkg_dir, eyes_dir, {k.lower() for k in files})
+        for rel, f in found.items():
+            files[rel] = base64.b64encode(f.read_bytes()).decode("ascii")
+        for ref in missing:
+            print(f"warning: {pkg_dir.name}: {ref} not found", file=sys.stderr)
         packages.append({"id": pkg_dir.name, "files": files})
     return packages
 
@@ -67,9 +161,13 @@ def main() -> int:
         return 1
     data_js = bundle_js(packages)
 
+    # The dev page's data only comes from the project's own eyes, so a build
+    # from some other folder (a test fixture, say) leaves it alone.
     dev = ROOT / "build" / "eyes-data.js"
-    dev.parent.mkdir(parents=True, exist_ok=True)
-    dev.write_text(data_js, encoding="utf-8")
+    own_eyes = args.eyes.resolve() == (ROOT / "eyes").resolve()
+    if own_eyes:
+        dev.parent.mkdir(parents=True, exist_ok=True)
+        dev.write_text(data_js, encoding="utf-8")
 
     html = (SRC / "index.html").read_text(encoding="utf-8")
     css = (SRC / "style.css").read_text(encoding="utf-8")
@@ -92,7 +190,8 @@ def main() -> int:
     args.out.write_text(html, encoding="utf-8")
     size = args.out.stat().st_size / 1e6
     print(f"{len(packages)} eye packages -> {args.out.relative_to(ROOT) if args.out.is_relative_to(ROOT) else args.out} ({size:.1f} MB)")
-    print(f"dev data -> {dev.relative_to(ROOT)}")
+    if own_eyes:
+        print(f"dev data -> {dev.relative_to(ROOT)}")
     return 0
 
 

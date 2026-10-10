@@ -703,7 +703,10 @@
         found.get(d)[rel] = it.file;
     }
     let added = 0, firstIndex = -1;
-    const skipped = [];
+    const skipped = [], unresolved = [];
+    // Every picked file, for packages that borrow lids or textures from a
+    // folder beside them.
+    const pool = new Map(items.map((it) => [it.path, it.file]));
     for (const [dir, fileMap] of found) {
       const id = (dir.split('/').pop() || 'eyes').replace(/[^\w.-]+/g, '_');
       const files = {};
@@ -718,6 +721,9 @@
         skipped.push(id + ' (config.eye: ' + e.message + ')');
         continue;
       }
+      const ext = ME.collectExternalAssets(files['config.eye'], id, dir, Object.keys(files), pool);
+      for (const { key, file } of ext.found) files[key] = new Uint8Array(await file.arrayBuffer());
+      if (ext.missing.length) unresolved.push(id + ' (' + ext.missing.join(', ') + ')');
       const key = 'added:' + id;
       const entry = { key, id, label: id, source: 'added', files };
       const existing = packages.findIndex((p) => p.key === key);
@@ -732,7 +738,10 @@
     let msg = added ? 'Added ' + added + ' eye package' + (added === 1 ? '' : 's') : 'Nothing added';
     if (!db && added) msg += ' (for this session only: this browser will not keep them)';
     if (skipped.length) msg += '. Skipped: ' + skipped.join(', ');
-    toast(msg, 6000);
+    if (unresolved.length)
+      msg += '. Missing files: ' + unresolved.join(', ') +
+        '. If they are in a folder beside the eyes, pick the folder that holds both.';
+    toast(msg, unresolved.length ? 10000 : 6000);
   }
 
   $('folder').addEventListener('change', (ev) => {

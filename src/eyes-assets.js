@@ -379,22 +379,91 @@
     return dir + '/' + asset;
   }
 
+  // Tidy a relative path: forward slashes, no "." segments, and ".." folded
+  // into the segment before it where there is one. A ".." that climbs above
+  // the start is kept, so "../lids/upper.bmp" stays as written.
+  function normalizePath(path) {
+    const out = [];
+    for (const part of String(path).replace(/\\/g, '/').split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..' && out.length && out[out.length - 1] !== '..') out.pop();
+      else out.push(part);
+    }
+    return out.join('/');
+  }
+
+  // A config asset name as the renderer will look for it, relative to the
+  // package directory: what copyAssetPath() makes of it, minus the package's
+  // own prefix.
+  function packageRelative(asset, id) {
+    const resolved = copyAssetPath(asset, configPathFor(id));
+    const prefix = '/eyes/' + id + '/';
+    return normalizePath(resolved.startsWith(prefix) ? resolved.slice(prefix.length) : resolved);
+  }
+
   // Find a resolved device path among a package's files. FAT is not case
-  // sensitive, so neither is this; a path outside the package falls back to
-  // its file name, which is what someone dropping in a folder would expect.
+  // sensitive, so neither is this. Files a package borrows from elsewhere --
+  // "../lids/upper.bmp", or another package's "demon/upper.bmp" -- were stored
+  // with it under that same relative name when it was taken in, so they are
+  // found the same way. Failing that, a file of the same name will do.
   function findFile(pkg, path) {
     if (!path) return null;
     const prefix = '/eyes/' + pkg.id + '/';
-    let rel = path.startsWith(prefix) ? path.slice(prefix.length) : path.replace(/^\/+/, '');
-    const lower = rel.toLowerCase();
+    const rel = normalizePath(path.startsWith(prefix) ? path.slice(prefix.length) : path).toLowerCase();
     let fallback = null;
-    const base = lower.slice(lower.lastIndexOf('/') + 1);
+    const base = rel.slice(rel.lastIndexOf('/') + 1);
     for (const name of Object.keys(pkg.files)) {
-      const l = name.toLowerCase();
-      if (l === lower) return pkg.files[name];
+      const l = normalizePath(name).toLowerCase();
+      if (l === rel) return pkg.files[name];
       if (!fallback && l.slice(l.lastIndexOf('/') + 1) === base) fallback = pkg.files[name];
     }
     return fallback;
+  }
+
+  const ASSET_KEYS = ['irisTexture', 'scleraTexture', 'upperEyelid', 'lowerEyelid'];
+
+  // Every asset name a config mentions, at the root and in its per-eye blocks.
+  function configAssetRefs(config) {
+    const refs = new Set();
+    for (const block of [config, config && config.left, config && config.right])
+      if (block && typeof block === 'object')
+        for (const k of ASSET_KEYS) if (isStr(block[k]) && block[k]) refs.add(block[k]);
+    return [...refs];
+  }
+
+  // Gather the files a package's config names from outside its own folder.
+  //   configText  the package's config.eye
+  //   id          the package's id (its directory name)
+  //   pkgDir      its directory, relative to whatever the user picked ('' for
+  //               the root)
+  //   have        names already in the package, relative to its directory
+  //   pool        Map of every picked file, path relative to the pick -> file
+  // A name is tried against the package directory (so ".." works), then the
+  // directory holding the packages (Adafruit's "demon/upper.bmp" style), then
+  // the root of the pick. Returns { found: [{ key, file }], missing: [names] },
+  // with each found file keyed by the name the renderer will look for.
+  function collectExternalAssets(configText, id, pkgDir, have, pool) {
+    let config;
+    try {
+      config = parseJsonc(decodeText(configText));
+    } catch (e) {
+      return { found: [], missing: [] };
+    }
+    const lowerPool = new Map();
+    for (const [path, file] of pool) lowerPool.set(normalizePath(path).toLowerCase(), file);
+    const haveLower = new Set([...have].map((n) => normalizePath(n).toLowerCase()));
+    const parent = pkgDir.includes('/') ? pkgDir.slice(0, pkgDir.lastIndexOf('/')) : '';
+    const found = [], missing = [];
+    for (const ref of configAssetRefs(config)) {
+      const rel = packageRelative(ref, id);
+      if (haveLower.has(rel.toLowerCase())) continue;
+      const candidates = [pkgDir ? pkgDir + '/' + rel : rel, parent ? parent + '/' + rel : rel, rel];
+      const hit = candidates.map((c) => normalizePath(c).toLowerCase())
+        .filter((c) => !c.startsWith('..')).find((c) => lowerPool.has(c));
+      if (hit) found.push({ key: rel, file: lowerPool.get(hit) });
+      else missing.push(ref);
+    }
+    return { found, missing };
   }
 
   function decodeText(bytes) {
@@ -423,7 +492,11 @@
     bmpLoadTexture,
     configPathFor,
     copyAssetPath,
+    normalizePath,
+    packageRelative,
     findFile,
+    configAssetRefs,
+    collectExternalAssets,
     decodeText,
     base64ToBytes,
     TEX_MAX_W,

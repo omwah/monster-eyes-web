@@ -50,6 +50,14 @@ change `eyes/` and rebuild. To add eyes without rebuilding, use **Add eyes…** 
 the page. Chrome keeps added eyes for next time; other browsers may forget
 them when the page closes.
 
+A package can use lids or textures kept outside its own folder. A shared
+folder beside the packages works (`"upperEyelid": "../lids/upper.bmp"`), and so
+does borrowing from another package in Adafruit's style
+(`"upperEyelid": "demon/upper.bmp"`). The build copies those files into the
+package that uses them. When adding eyes in the page, pick the folder that
+holds both the eyes and the shared files; the page names any file it can't
+find.
+
 Sounds (`.wav`) are ignored, because this version is silent.
 
 ## Building

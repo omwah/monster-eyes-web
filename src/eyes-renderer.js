@@ -498,11 +498,14 @@
       this.upperClosed = lids.subarray(size, size * 2);
       this.lowerOpen = lids.subarray(size * 2, size * 3);
       this.lowerClosed = lids.subarray(size * 3, size * 4);
+      // Name a file the way the package's config does, not as a device path.
+      const prefix = '/eyes/' + this.pkg.id + '/';
+      const shown = (path) => (path.startsWith(prefix) ? path.slice(prefix.length) : path);
       const loadLid = (path, open, closed, isUpper, label) => {
         if (path) {
           const bytes = findFile(this.pkg, path);
           if (bytes && bmpLoadEyelid(bytes, open, closed, size, isUpper)) return;
-          this.warnings.push(label + ' eyelid ' + path + ' unusable -- no eyelid');
+          this.warnings.push(label + ' eyelid ' + shown(path) + (bytes ? ' unusable' : ' not found') + ' -- no eyelid');
         }
         open.fill(isUpper ? size - 1 : 0);
         closed.fill(isUpper ? size - 1 : 0);
@@ -523,7 +526,7 @@
           const bytes = findFile(this.pkg, path);
           const tex = bytes && bmpLoadTexture(bytes, budget, this.parity);
           if (tex) return tex;
-          this.warnings.push(label + ' ' + path + ' unusable -- solid colour');
+          this.warnings.push(label + ' ' + shown(path) + (bytes ? ' unusable' : ' not found') + ' -- solid colour');
         }
         return { data: new Uint32Array([pack565(color)]), width: 1, height: 1 };
       };

@@ -3,6 +3,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { ROOT, readPng } from './lib/node-env.mjs';
 
 const PAGE = 'file://' + path.join(ROOT, 'dist/monster-eyes.html');
@@ -312,4 +313,47 @@ test('the FPS overlay toggles, stays up with the controls hidden, and is remembe
   await expect(fps).toBeVisible();
   await page.keyboard.press('i');
   await expect(fps).toBeHidden();
+});
+
+// Packages whose config names lids in another folder: "../lids/upper.bmp"
+// beside the packages, or Adafruit's "donor/upper.bmp" from another package.
+const FIXTURE = path.join(ROOT, 'tests/fixtures/shared-eyes');
+
+test('lids kept in another folder are bundled with the package that uses them', async ({ page }) => {
+  const out = path.join(ROOT, 'build/fixture.html');
+  execFileSync('python3', [path.join(ROOT, 'tools/build.py'), '--eyes', FIXTURE, '--out', out], { stdio: 'pipe' });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('file://' + out);
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  const result = await page.evaluate(() => {
+    const out = {};
+    for (const o of document.querySelectorAll('#pkg option')) {
+      monsterEyesApp.select(Number(o.value));
+      const r = monsterEyesApp.renderer;
+      out[monsterEyesApp.packageKey] = { warnings: r.warnings, hasLids: r.hasLids };
+    }
+    return out;
+  });
+  for (const id of ['shared_lids', 'borrower', 'donor'])
+    expect(result['bundled:' + id], id).toEqual({ warnings: [], hasLids: true });
+  expect(errors).toEqual([]);
+});
+
+test('Add eyes… finds lids in a folder beside the eyes, and says when they are missing', async ({ page }) => {
+  await open(page);
+  await page.setInputFiles('#folder', FIXTURE);
+  await page.waitForFunction(() => monsterEyesApp.packageCount === 29);
+  for (const id of ['shared_lids', 'borrower']) {
+    const r = await page.evaluate((id) => {
+      const o = [...document.querySelectorAll('#pkg option')].find((o) => o.textContent.toLowerCase().startsWith(id.replace('_', ' ')));
+      monsterEyesApp.select(Number(o.value));
+      return { key: monsterEyesApp.packageKey, warnings: monsterEyesApp.renderer.warnings, hasLids: monsterEyesApp.renderer.hasLids };
+    }, id);
+    expect(r, id).toEqual({ key: 'added:' + id, warnings: [], hasLids: true });
+  }
+  // Only the package folder: its lids are not in what was picked.
+  await page.setInputFiles('#folder', path.join(FIXTURE, 'shared_lids'));
+  await expect(page.locator('#toast')).toContainText('Missing files');
+  await expect(page.locator('#toast')).toContainText('../lids/upper.bmp');
 });
