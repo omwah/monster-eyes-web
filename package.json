@@ -1,5 +1,6 @@
 {
   "name": "monster-eyes-web",
+  "version": "1.0.0",
   "private": true,
   "description": "Browser port of the Monster Eyes renderer",
   "scripts": {
@@ -7,6 +8,7 @@
     "build:simple": "python3 tools/build.py --target simple",
     "build:customizable": "python3 tools/build.py --target customizable",
     "build:web": "python3 tools/build.py --target web",
+    "release": "python3 tools/build.py --release",
     "test": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers playwright test",
     "parity": "node tests/parity.mjs",
     "install-browser": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers playwright install chromium"

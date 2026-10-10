@@ -13,6 +13,8 @@
   // loaded from separate files, plus importing), or 'dev' for src/index.html.
   const VARIANT = window.MONSTER_EYES_VARIANT || 'dev';
   const CAN_IMPORT = VARIANT !== 'simple';
+  // Stamped in by the build: "1.2.0", or "1.2.0+g1a2b3c4" between releases.
+  const VERSION = window.MONSTER_EYES_VERSION || 'dev';
   const $ = (id) => document.getElementById(id);
   const stage = $('stage');
   const ring = $('ring');
@@ -1041,6 +1043,7 @@
     // The simple build only shows what it was built with.
     for (const id of ['add', 'folder', 'drop', 'empty-add']) $(id).remove();
   }
+  $('version').textContent = 'Monster Eyes ' + VERSION;
   $('bar').addEventListener('pointerdown', () => { wake(); keepAwake(); });
   $('bar').addEventListener('pointermove', wake);
 
@@ -1330,6 +1333,7 @@
     get packageCount() { return packages.length; },
     get readyCount() { return packages.filter(isReady).length; },
     get variant() { return VARIANT; },
+    get version() { return VERSION; },
     get background() { return background.css; },
     get prefs() { return JSON.parse(JSON.stringify(prefs)); },
     get wakeLocked() { return !!wakeLock || !!(wakeVideo && !wakeVideo.paused); },

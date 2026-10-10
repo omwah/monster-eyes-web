@@ -691,6 +691,38 @@ test('web, from disk: every eye file loads and draws', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('every build shows its version, from package.json, in the eye picker', async ({ page }) => {
+  const want = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  for (const url of [SIMPLE, CUSTOMIZABLE, WEB]) {
+    await page.goto(url);
+    await page.waitForFunction(() => window.monsterEyesApp);
+    const version = await app(page, 'monsterEyesApp.version');
+    // A release says just the version; any other commit adds itself to it.
+    expect(version, url).toMatch(new RegExp('^' + want.replace(/\./g, '\\.') + '(\\+g[0-9a-f]{7,}(\\.dirty)?)?$'));
+    await expect(page.locator('#version')).toHaveText('Monster Eyes ' + version);
+  }
+});
+
+test('the release: its eyes zip adds to the customizable version as it is', async ({ page }) => {
+  const RELEASE = path.join(ROOT, 'dist/release');
+  test.skip(!fs.existsSync(RELEASE), 'Run python3 tools/build.py --release first');
+  const names = fs.readdirSync(RELEASE);
+  const sums = fs.readFileSync(path.join(RELEASE, 'SHA256SUMS'), 'utf8').trim().split('\n').map((l) => l.split('  ')[1]);
+  expect(names.sort()).toEqual([...sums, 'SHA256SUMS'].sort());
+  for (const kind of ['simple-', 'customizable-', 'web-', 'eyes-']) expect(sums.some((n) => n.startsWith('monster-eyes-' + kind))).toBe(true);
+  // Unzipped, the folder inside is picked with Add eyes…, README and all.
+  const zip = path.join(RELEASE, sums.find((n) => n.startsWith('monster-eyes-eyes-')));
+  const out = fs.mkdtempSync(path.join(ROOT, 'test-results', 'eyes-zip-'));
+  execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', zip, out]);
+  const [top] = fs.readdirSync(out);
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(CUSTOMIZABLE);
+  await page.setInputFiles('#folder', path.join(out, top));
+  await page.waitForFunction(() => monsterEyesApp.packageCount === 26 && monsterEyesApp.renderer);
+  expect(errors).toEqual([]);
+});
+
 // The web build over http, as the website serves it.
 test.describe('web, over http', () => {
   let server, base;

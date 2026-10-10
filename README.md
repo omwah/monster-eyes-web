@@ -9,6 +9,9 @@ more, all set from each package's `config.eye`.
 and republished from `main` on every push. It is the web version: the eyes
 load as you go, and you can add eye folders of your own.
 
+**Download it:** each [release](https://github.com/omwah/monster-eyes-web/releases)
+has all three versions below, plus the eyes on their own.
+
 ## Three versions
 
 `python3 tools/build.py` builds all three into `dist/`. None needs internet,
@@ -21,6 +24,7 @@ an install or a web server.
 | **Web**: the `web/` folder | A small `index.html`, with each eye in its own file under `eyes/`. The first eye shows straight away and the rest load behind it. Built-in eyes plus importing | The website. It also works copied or unzipped as a folder: open `index.html` |
 
 All three share the same controls; the simple version has no Add eyes….
+The version number is at the bottom of the eye list.
 
 ## Using it
 
@@ -105,11 +109,44 @@ exists, which is handy while editing.
 | `src/eyes-assets.js` | `config.eye` parsing, BMP decoding. A port of `Eyes_Assets.cpp` |
 | `src/eyes-renderer.js` | The renderer and animators. A port of `Adafruit_Monster_Eyes.cpp`; the differences are listed at its top |
 | `src/app.js` | Layout, input, controls, the eye list and slideshow, wake lock, adding folders, and loading the web version's eye files |
-| `tools/build.py` | Builds the three versions: inlines the code, and either bundles the eyes or writes one script per eye |
-| `.github/workflows/pages.yml` | Publishes the web version to GitHub Pages on every push to `main` |
+| `tools/build.py` | Builds the three versions: inlines the code, and either bundles the eyes or writes one script per eye. Stamps the version, and packages releases |
+| `.github/workflows/pages.yml` | Publishes the web version to GitHub Pages on every push to `main`, and keeps the release files with the run |
+| `.github/workflows/release.yml` | Builds, tests and publishes a GitHub Release for each `v*` tag |
 
 No runtime dependencies, and no modules, because ES modules do not load from
 `file://`.
+
+## Versions and releases
+
+The version follows [semantic versioning](https://semver.org) and lives in
+`package.json`, nowhere else. Every build carries it in the page, the eye
+list and the header comment. A build from the commit tagged `v<version>`
+says just that, `1.2.0`; any other commit adds itself, `1.2.0+g1a2b3c4`,
+and `.dirty` follows when there are uncommitted changes.
+
+To release, bump the version and push the tag:
+
+```sh
+npm version minor            # or patch / major: bumps, commits, tags v1.3.0
+git push --follow-tags
+```
+
+The tag starts `.github/workflows/release.yml`. It builds everything,
+runs the tests, and publishes a GitHub Release with these files:
+
+| File | |
+|---|---|
+| `monster-eyes-simple-<version>.html` | The simple version |
+| `monster-eyes-customizable-<version>.html` | The customizable version |
+| `monster-eyes-web-<version>.zip` | The web version; unzip and open `index.html`, or put it on a web server |
+| `monster-eyes-eyes-<version>.zip` | The 26 eye packages as they are in `eyes/` (`config.eye` and pictures, no sounds). Unzip, then pick the folder with **Add eyes…** in the customizable or web version |
+| `SHA256SUMS` | Checksums of the above |
+
+`python3 tools/build.py --release` (or `npm run release`) makes the same
+files in `dist/release/`. The zips are the same byte for byte each time
+they are built from the same source. Every push to `main` also keeps them
+with its Pages run, as a workflow artifact. Running the Release workflow
+by hand builds and tests without publishing.
 
 ## Testing
 
@@ -119,7 +156,7 @@ Everything is installed inside this directory:
 npm install && npm run install-browser   # Playwright + Chromium in ./.playwright-browsers
 pixi run build-sim --sim DIR             # the C++ renderer, as a reference
 npm run parity                           # JS port vs C++, pixel by pixel
-python3 tools/build.py && npm test       # the pages themselves
+python3 tools/build.py --release && npm test   # the pages, and the release files
 ```
 
 `DIR` is the source directory of `eye-sim`, the desktop build of a C++ fork of
@@ -148,6 +185,8 @@ version over http too, and checks:
 - adding folders, lids kept in another folder, and removing imported eyes
 - independent sizes, Center and Fit
 - the eye checklist, the slideshow and its transitions, and Auto-blink
+- that each build shows its version, and that the release's eyes zip adds
+  to the customizable build as it is
 - what each build allows: no importing in the simple build, the empty start
   of the customizable build, and the web build's first eye showing before
   the rest have loaded

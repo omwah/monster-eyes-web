@@ -1,0 +1,62 @@
+# Release: on a pushed tag v<version>, build all three versions and the eye
+# packages, test them, and publish them as a GitHub Release. Run by hand, it
+# does the same short of publishing, as a dry run.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ./.playwright-browsers
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-tags: true
+
+      # The tag names the version package.json holds, or there is nothing to do.
+      - name: Check the tag
+        if: github.ref_type == 'tag'
+        run: |
+          want="v$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json ($want)"
+            exit 1
+          fi
+
+      - name: Build
+        run: python3 tools/build.py --release
+
+      # A tagged build is the plain version, with no commit after it.
+      - name: Check the version
+        if: github.ref_type == 'tag'
+        run: test -f "dist/release/monster-eyes-simple-${GITHUB_REF_NAME#v}.html"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Test
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm test
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: monster-eyes-release
+          path: dist/release/
+
+      - name: Publish
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/release/* --title "Monster Eyes ${GITHUB_REF_NAME#v}" --generate-notes

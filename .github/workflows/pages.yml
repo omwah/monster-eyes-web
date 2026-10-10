@@ -1,4 +1,5 @@
 # Build the web version and publish it to GitHub Pages on every push to main.
+# Everything a release would ship is kept with the run, too.
 name: Pages
 
 on:
@@ -18,11 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-tags: true  # So a released commit shows just its version
 
-      # The web build: a small page with each eye in its own file, loaded as
-      # needed. Standard library only; the runner's Python is enough.
+      # All three versions and the release files. The site is the web build:
+      # a small page with each eye in its own file, loaded as needed.
+      # Standard library only; the runner's Python is enough.
       - name: Build
-        run: python3 tools/build.py --target web
+        run: python3 tools/build.py --release
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: monster-eyes-${{ github.sha }}
+          path: dist/release/
 
       - name: Assemble site
         run: cp -r dist/web _site

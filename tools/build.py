@@ -2,6 +2,7 @@
 """Build Monster Eyes into pages that need no server and no install.
 
     python3 tools/build.py [--target all|simple|customizable|web] [--eyes DIR] [--out FILE]
+    python3 tools/build.py --release
 
 Three targets, all from the same src/:
 
@@ -22,6 +23,14 @@ config.eye. Its config.eye and bitmaps go in, along with any lids or
 textures its config names from another folder. Sounds are left out: the
 browser version is silent.
 
+Every build is stamped with the version from package.json. Built from
+anything but the commit tagged v<version>, it also carries the commit:
+"1.2.0+g1a2b3c4", with ".dirty" after it for uncommitted changes.
+
+--release builds all three, then puts what a release ships in
+dist/release/: the two single files, the web version and the eye packages
+as zips, and SHA256SUMS. The zips come out the same for the same source.
+
 A build of the project's own eyes also writes build/eyes-data.js, which
 src/index.html loads, so the unbundled page can be opened straight from src/
 while working on it.
@@ -35,7 +44,9 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,9 +58,30 @@ OUTPUTS = {
     "customizable": ROOT / "dist" / "monster-eyes-customizable.html",
     "web": ROOT / "dist" / "web",
 }
+RELEASE = ROOT / "dist" / "release"
 
 
 ASSET_KEYS = ("irisTexture", "scleraTexture", "upperEyelid", "lowerEyelid")
+
+
+def git(*args):
+    """A git command's output, or None outside a checkout or without git."""
+    try:
+        out = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out.stdout.strip()
+
+
+def version() -> str:
+    base = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+    sha = git("rev-parse", "--short=7", "HEAD")
+    if sha is None:
+        return base  # A source download: nothing to tell it apart by
+    dirty = ".dirty" if git("status", "--porcelain", "--untracked-files=no") else ""
+    if f"v{base}" in (git("tag", "--points-at", "HEAD") or "").split() and not dirty:
+        return base
+    return f"{base}+g{sha}{dirty}"
 
 
 def strip_comments(text: str) -> str:
@@ -172,12 +204,14 @@ def inline_safe(js: str) -> str:
     return re.sub(r"</(script)", r"<\\/\1", js, flags=re.IGNORECASE)
 
 
-def page(variant: str, data_scripts) -> str:
+def page(variant: str, ver: str, data_scripts) -> str:
     """index.html with the stylesheet and scripts inlined: the variant flag,
     then any data scripts, then the code."""
     html = (SRC / "index.html").read_text(encoding="utf-8")
     css = (SRC / "style.css").read_text(encoding="utf-8")
-    scripts = [f"window.MONSTER_EYES_VARIANT = {json.dumps(variant)};\n"] + list(data_scripts) + [
+    flags = (f"window.MONSTER_EYES_VARIANT = {json.dumps(variant)};\n"
+             f"window.MONSTER_EYES_VERSION = {json.dumps(ver)};\n")
+    scripts = [flags] + list(data_scripts) + [
         (SRC / name).read_text(encoding="utf-8")
         for name in re.findall(r'<script src="([\w.-]+\.js)"></script>', html)
     ]
@@ -188,7 +222,7 @@ def page(variant: str, data_scripts) -> str:
                   html, flags=re.S)
     # The MIT notice travels with every copy, and this file is a copy.
     notice = (ROOT / "LICENSE").read_text(encoding="utf-8").replace("--", "- -")
-    return html.replace("<head>", f"<head>\n<!--\nMonster Eyes for the browser ({variant}): "
+    return html.replace("<head>", f"<head>\n<!--\nMonster Eyes for the browser {ver} ({variant}): "
                         f"{REPO}\n\n" + notice + "-->", 1)
 
 
@@ -201,7 +235,7 @@ def shown(path: Path) -> str:
     return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
 
 
-def build_web(packages, out_dir: Path) -> None:
+def build_web(packages, out_dir: Path, ver: str) -> None:
     """index.html plus one script per package, named by a hash of its
     contents so it can be cached for good. The manifest in the page lists
     them in order, so every eye can be named before any has arrived."""
@@ -210,6 +244,7 @@ def build_web(packages, out_dir: Path) -> None:
         shutil.rmtree(eyes_dir)  # Old hashed files would only pile up
     manifest = []
     for pkg in packages:
+        # No version in here: the file name would change with every commit.
         body = (f"/* Monster Eyes eye package {json.dumps(pkg['id'])}: {REPO} (MIT) */\n"
                 f"MonsterEyes.registerPackage({json.dumps(pkg, separators=(',', ':'))});\n")
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:10]
@@ -218,7 +253,75 @@ def build_web(packages, out_dir: Path) -> None:
         write(out_dir / name, body)
         manifest.append({"id": pkg["id"], "file": name, "bytes": len(body)})
     data = "window.MONSTER_EYES_MANIFEST = " + json.dumps(manifest, separators=(",", ":")) + ";\n"
-    write(out_dir / "index.html", page("web", [data]))
+    write(out_dir / "index.html", page("web", ver, [data]))
+
+
+EYES_README = """Monster Eyes eye packages {ver}
+{repo}
+
+Each folder holding a config.eye is one eye package: the config and its
+.bmp pictures. Some packages borrow lids from a folder beside them, so keep
+the folders together.
+
+To use them, open the customizable or web version, choose Add eyes..., and
+pick this folder (or any one package inside it). The browser keeps them for
+next time.
+
+Credits for the eyes are in the project's README.
+"""
+
+
+def zip_write(zf: zipfile.ZipFile, name: str, data: bytes) -> None:
+    """One entry, with a fixed date and mode, so a zip depends only on its
+    contents."""
+    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    info.external_attr = 0o644 << 16
+    info.compress_type = zipfile.ZIP_DEFLATED
+    zf.writestr(info, data, compresslevel=9)
+
+
+def zip_tree(out: Path, top: str, src: Path, files, extra=()) -> None:
+    """files under src, and (name, bytes) extras, inside a folder named top."""
+    entries = {f"{top}/{f.relative_to(src).as_posix()}": f.read_bytes() for f in files}
+    entries.update({f"{top}/{name}": data for name, data in extra})
+    with zipfile.ZipFile(out, "w") as zf:
+        for name in sorted(entries):
+            zip_write(zf, name, entries[name])
+
+
+def release(eyes_dir: Path, ver: str) -> None:
+    if RELEASE.exists():
+        shutil.rmtree(RELEASE)
+    RELEASE.mkdir(parents=True)
+    licence = (ROOT / "LICENSE").read_bytes()
+    made = []
+    for target in ("simple", "customizable"):
+        out = RELEASE / f"monster-eyes-{target}-{ver}.html"
+        shutil.copyfile(OUTPUTS[target], out)
+        made.append(out)
+
+    web = OUTPUTS["web"]
+    out = RELEASE / f"monster-eyes-web-{ver}.zip"
+    zip_tree(out, f"monster-eyes-web-{ver}", web, [f for f in web.rglob("*") if f.is_file()],
+             [("LICENSE", licence)])
+    made.append(out)
+
+    # The eye packages as they are in eyes/, for adding to the other versions.
+    # Only what the browser reads: config.eye and the pictures.
+    eyes = [f for f in eyes_dir.rglob("*")
+            if f.is_file() and f.suffix.lower() in KEEP
+            and not any(p.startswith(".") for p in f.relative_to(eyes_dir).parts)]
+    out = RELEASE / f"monster-eyes-eyes-{ver}.zip"
+    readme = EYES_README.format(ver=ver, repo=REPO).encode("utf-8")
+    zip_tree(out, f"monster-eyes-eyes-{ver}", eyes_dir, eyes,
+             [("README.txt", readme), ("LICENSE", licence)])
+    made.append(out)
+
+    sums = "".join(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.name}\n" for f in made)
+    (RELEASE / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    for f in made:
+        print(f"release: {shown(f)} ({f.stat().st_size / 1e6:.1f} MB)")
+    print(f"release: {shown(RELEASE / 'SHA256SUMS')}")
 
 
 def main() -> int:
@@ -226,10 +329,15 @@ def main() -> int:
     ap.add_argument("--target", choices=["all", "simple", "customizable", "web"], default="all")
     ap.add_argument("--eyes", type=Path, default=ROOT / "eyes", help="directory of eye packages")
     ap.add_argument("--out", type=Path, help="output file, for a single simple or customizable build")
+    ap.add_argument("--release", action="store_true", help="build all three and package them in dist/release/")
     args = ap.parse_args()
+    if args.release and (args.out or args.target != "all"):
+        ap.error("--release builds every target, to the usual places")
     if args.out and args.target not in ("simple", "customizable"):
         ap.error("--out needs --target simple or --target customizable")
 
+    ver = version()
+    print(f"Monster Eyes {ver}")
     targets = ["simple", "customizable", "web"] if args.target == "all" else [args.target]
     packages = []
     if any(t != "customizable" for t in targets):
@@ -241,13 +349,13 @@ def main() -> int:
     for target in targets:
         if target == "web":
             out = OUTPUTS["web"]
-            build_web(packages, out)
+            build_web(packages, out, ver)
             size = (out / "index.html").stat().st_size / 1e3
             print(f"web: {len(packages)} eye packages -> {shown(out)}/ (index.html {size:.0f} KB)")
             continue
         out = args.out or OUTPUTS[target]
         data = [bundle_js(packages)] if target == "simple" else []
-        write(out, page(target, data))
+        write(out, page(target, ver, data))
         size = out.stat().st_size / 1e6
         print(f"{target}: {len(packages) if target == 'simple' else 'no'} eye packages -> {shown(out)} ({size:.1f} MB)")
 
@@ -257,6 +365,8 @@ def main() -> int:
         dev = ROOT / "build" / "eyes-data.js"
         write(dev, bundle_js(packages))
         print(f"dev data -> {shown(dev)}")
+    if args.release:
+        release(args.eyes, ver)
     return 0
 
 
