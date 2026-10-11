@@ -199,8 +199,8 @@ Chromium needs some system libraries. If it will not start, run
 
 Each eye is drawn on the CPU into its own canvas, at up to 512 px, and the
 browser scales it to the size on screen. Two 512 px eyes take a few
-milliseconds a frame. If a machine cannot keep up, the page lowers the
-resolution by itself.
+milliseconds a frame. Resolution stays fixed for a given eye size; if a
+machine cannot keep up, reduce the eye size or use one eye.
 
 ## Licence and credits
 

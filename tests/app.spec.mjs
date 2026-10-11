@@ -286,12 +286,33 @@ test('performance: two eyes at 1920x1080 hold 60 fps', async ({ page }) => {
   expect(result.medianFrame).toBeLessThan(17.5);
 });
 
+test('slow rendering does not progressively lower eye resolution', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await open(page);
+  await page.evaluate(() => {
+    const r = monsterEyesApp.renderer;
+    const draw = r.draw.bind(r);
+    r.draw = (...args) => {
+      draw(...args);
+      const end = performance.now() + 12;
+      while (performance.now() < end) {} // Simulate a consistently slow renderer.
+    };
+  });
+  const original = await app(page, 'monsterEyesApp.renderer.size');
+  await page.evaluate(() => new Promise((resolve) => {
+    let frames = 0;
+    const tick = () => ++frames >= 110 ? resolve() : requestAnimationFrame(tick);
+    requestAnimationFrame(tick);
+  }));
+  expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(original);
+});
+
 test('a rebuilt eye is drawn before it is shown, and does not blink', async ({ page }) => {
   await open(page);
   const anime = await page.evaluate(() => monsterEyesApp.indexOf('anime'));
   await page.evaluate((i) => monsterEyesApp.select(i), anime);
   await page.waitForTimeout(500); // Past the blink a freshly chosen eye opens with
-  // Rebuilding in place, as the resolution governor and resizing do. Read the
+  // Rebuilding in place, as resizing does. Read the
   // new canvases synchronously, before the browser has had a frame.
   const res = await page.evaluate(() => {
     const r0 = monsterEyesApp.renderer;

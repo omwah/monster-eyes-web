@@ -25,7 +25,6 @@
   const MIN_SCALE = 0.2, MAX_SCALE = 3;
   const DEVICE_GAP = 28;         // The panel's default gap, against a 128 px eye
   const MAX_RENDER = 512, MIN_RENDER = 128;
-  const RENDER_BUDGET_MS = 9;    // Above this the governor lowers resolution
   const SLIDE_INTERVALS = [0, 30, 60, 120, 300]; // Seconds; 0 keeps one eye
   const CLOSE_MS = 150, OPEN_MS = 250, FADE_MS = 300; // Slideshow transition
 
@@ -373,7 +372,6 @@
   let eyeImages = [];     // ImageData wrapping the renderer's own buffers
   let placed = '';        // The layout the canvases were last positioned for
   let background = { css: '#000', word: 0 };
-  let renderCap = MAX_RENDER; // Lowered by the governor on a slow machine
   let rebuildTimer = 0;
 
   function wantedEyes() {
@@ -383,7 +381,7 @@
   // Both eyes share one render size: enough for the larger of them.
   function renderSizeFor(n) {
     const size = Math.max(...layoutFor(n).map((r) => r.size)) * view.dpr;
-    return Math.max(MIN_RENDER, Math.min(renderCap, Math.round(size / 2) * 2));
+    return Math.max(MIN_RENDER, Math.min(MAX_RENDER, Math.round(size / 2) * 2));
   }
 
   function build(index) {
@@ -456,7 +454,6 @@
     background = r.background();
     refreshPicker();
     if (r.warnings.length) toast(prettyName(entry) + ': ' + r.warnings[0]);
-    governor.reset();
     paint(performance.now());
     syncButtons();
   }
@@ -615,25 +612,6 @@
       if (Math.abs(want - renderer.size) / renderer.size > 0.12) build(current);
     }, 300);
   }
-
-  // Keeps rendering inside its budget: if a frame's pixel work averages over
-  // RENDER_BUDGET_MS, the render size steps down and the canvas scales it up.
-  const governor = {
-    ema: 0,
-    frames: 0,
-    reset() {
-      this.ema = 0;
-      this.frames = 0;
-    },
-    sample(ms) {
-      this.ema = this.frames ? this.ema * 0.95 + ms * 0.05 : ms;
-      if (++this.frames < 90 || !renderer) return;
-      if (this.ema > RENDER_BUDGET_MS && renderer.size > MIN_RENDER) {
-        renderCap = Math.max(MIN_RENDER, Math.round(renderer.size * 0.85));
-        build(current);
-      }
-    },
-  };
 
   // ===========================================================================
   //  POINTER: FOLLOWING, DRAGGING, SIZING
@@ -850,7 +828,6 @@
     runSlideshow(ts);
     followPointer(ts, dt);
     const ms = paint(ts);
-    governor.sample(ms);
     meter(ts, dt, ms);
   }
 
