@@ -1,6 +1,6 @@
 {
   "name": "monster-eyes-web",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Browser port of the Monster Eyes renderer",
   "scripts": {
