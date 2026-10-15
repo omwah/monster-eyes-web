@@ -27,6 +27,7 @@
   const MIN_RENDER = 128;
   const RESOLUTIONS = ['auto', 1024, 512, 320, 192]; // Render px caps; Auto depends on the renderer
   const FRAME_RATES = [0, 30]; // 0: every screen refresh
+  const RENDERERS = ['auto', 'gpu', 'cpu'];
   const SLIDE_INTERVALS = [0, 30, 60, 120, 300]; // Seconds; 0 keeps one eye
   const CLOSE_MS = 150, OPEN_MS = 250, FADE_MS = 300; // Slideshow transition
 
@@ -48,7 +49,7 @@
     excluded: [], // Keys of eyes left out of ◀ ▶ and the slideshow
     slideshow: { interval: 0, order: 'order' }, // Seconds per eye (0: always this one)
     layouts: { 1: freshLayout(), 2: freshLayout() },
-    quality: { resolution: 'auto', fps: 0 },
+    quality: { renderer: 'auto', resolution: 'auto', fps: 0 },
   };
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
@@ -68,7 +69,8 @@
       if (!ss || !SLIDE_INTERVALS.includes(ss.interval) || !['order', 'random'].includes(ss.order))
         prefs.slideshow = { interval: 0, order: 'order' };
       const q = prefs.quality;
-      if (!q || typeof q !== 'object') prefs.quality = { resolution: 'auto', fps: 0 };
+      if (!q || typeof q !== 'object') prefs.quality = { renderer: 'auto', resolution: 'auto', fps: 0 };
+      if (!RENDERERS.includes(prefs.quality.renderer)) prefs.quality.renderer = 'auto';
       if (!RESOLUTIONS.includes(prefs.quality.resolution)) prefs.quality.resolution = 'auto';
       if (!FRAME_RATES.includes(prefs.quality.fps)) prefs.quality.fps = 0;
     }
@@ -300,10 +302,7 @@
 
   function dropRenderer() {
     renderer = null;
-    for (const c of eyeCanvases) c.remove();
-    eyeCanvases = [];
-    eyeContexts = [];
-    eyeImages = [];
+    dropCanvases();
     placed = '';
     ring.classList.remove('on');
   }
@@ -378,6 +377,8 @@
   let eyeCanvases = [];   // One canvas per eye at render size, scaled by CSS
   let eyeContexts = [];
   let eyeImages = [];     // ImageData wrapping the renderer's own buffers
+  let glEyes = [];        // Or, drawing on the GPU, one GLEye per canvas
+  let gpuBroken = false;  // The GPU failed once; the CPU draws from then on
   let placed = '';        // The layout the canvases were last positioned for
   let background = { css: '#000', word: 0 };
   let rebuildTimer = 0;
@@ -386,10 +387,21 @@
     return prefs.eyes === 1 || prefs.eyes === 2 ? prefs.eyes : 'auto';
   }
 
+  // What WebGL2 there is: { available, accelerated, name }.
+  const gpuInfo = () => (ME.GLEye ? ME.GLEye.probe() : { available: false, accelerated: false, name: '' });
+
+  // Whether to draw on the GPU. Auto does where the GPU is a real one;
+  // software WebGL is often slower than drawing in JavaScript.
+  function wantGpu() {
+    const info = gpuInfo(), choice = prefs.quality.renderer;
+    if (gpuBroken || !info.available || choice === 'cpu') return false;
+    return choice === 'gpu' || info.accelerated;
+  }
+
   // The most pixels across an eye is drawn with, from the Quality setting.
   function maxRender() {
     const res = prefs.quality.resolution;
-    return res === 'auto' ? 512 : res;
+    return res === 'auto' ? (wantGpu() ? 1024 : 512) : res;
   }
 
   // Both eyes share one render size: enough for the larger of them.
@@ -449,10 +461,26 @@
     }
     renderer = r;
     current = index;
-    for (const c of eyeCanvases) c.remove();
-    eyeCanvases = [];
-    eyeContexts = [];
-    eyeImages = [];
+    dropCanvases();
+    if (wantGpu() && ME.GLEye.fits(r)) {
+      try {
+        makeCanvases(r, true);
+      } catch (e) {
+        dropCanvases();
+        gpuFailed('could not draw these eyes');
+      }
+    }
+    if (!glEyes.length) makeCanvases(r, false);
+    placed = '';
+    background = r.background();
+    refreshPicker();
+    if (r.warnings.length) toast(prettyName(entry) + ': ' + r.warnings[0]);
+    paint(performance.now());
+    syncButtons();
+  }
+
+  // One canvas per eye, drawn by a GLEye or with putImageData.
+  function makeCanvases(r, gpu) {
     for (let e = 0; e < r.numEyes; e++) {
       const c = document.createElement('canvas');
       c.width = c.height = r.canvasSize;
@@ -461,15 +489,28 @@
       c.className = 'eye';
       stage.appendChild(c);
       eyeCanvases.push(c);
-      eyeContexts.push(c.getContext('2d', { alpha: r.clearLids }));
-      eyeImages.push(new ImageData(new Uint8ClampedArray(r.buffers[e].buffer), r.canvasSize, r.canvasSize));
+      if (gpu) {
+        glEyes.push(new ME.GLEye(c, r, e));
+      } else {
+        eyeContexts.push(c.getContext('2d', { alpha: r.clearLids }));
+        eyeImages.push(new ImageData(new Uint8ClampedArray(r.buffers[e].buffer), r.canvasSize, r.canvasSize));
+      }
     }
-    placed = '';
-    background = r.background();
-    refreshPicker();
-    if (r.warnings.length) toast(prettyName(entry) + ': ' + r.warnings[0]);
-    paint(performance.now());
-    syncButtons();
+  }
+
+  function dropCanvases() {
+    for (const g of glEyes) g.destroy();
+    for (const c of eyeCanvases) c.remove();
+    eyeCanvases = [];
+    eyeContexts = [];
+    eyeImages = [];
+    glEyes = [];
+  }
+
+  function gpuFailed(why) {
+    gpuBroken = true;
+    toast('The GPU ' + why + '; drawing with the CPU instead', 4000);
+    if (!qualityPanel.hidden) syncQuality();
   }
 
   let wantedIndex = -1; // An eye asked for that is still loading
@@ -860,8 +901,20 @@
     paintCount++;
     const t0 = performance.now();
     renderer.update(ts * 1000);
-    renderer.draw();
-    for (let e = 0; e < renderer.numEyes; e++) eyeContexts[e].putImageData(eyeImages[e], 0, 0);
+    if (glEyes.length) {
+      if (glEyes.some((g) => g.lost)) {
+        gpuFailed('stopped drawing');
+        build(current); // Which paints, on the CPU
+        return performance.now() - t0;
+      }
+      for (let e = 0; e < renderer.numEyes; e++) {
+        renderer.updateEye(e, renderer.now);
+        glEyes[e].draw();
+      }
+    } else {
+      renderer.draw();
+      for (let e = 0; e < renderer.numEyes; e++) eyeContexts[e].putImageData(eyeImages[e], 0, 0);
+    }
     place();
     return performance.now() - t0;
   }
@@ -878,7 +931,7 @@
       $('fps').textContent = fps.toFixed(0) + ' fps\n' +
         'slowest frame ' + fpsMeter.worst.toFixed(1) + ' ms\n' +
         'eyes drawn in ' + (fpsMeter.work / fpsMeter.frames).toFixed(1) + ' ms\n' +
-        renderer.numEyes + ' × ' + renderer.size + ' px';
+        renderer.numEyes + ' × ' + renderer.size + ' px · ' + (glEyes.length ? 'GPU' : 'CPU');
     }
     fpsMeter.frames = 0;
     fpsMeter.worst = 0;
@@ -972,14 +1025,25 @@
   }
 
   function setQuality(change) {
+    const before = wantGpu();
     Object.assign(prefs.quality, change);
     savePrefs();
     syncQuality();
-    if (renderer && renderSizeFor(renderer.numEyes) !== renderer.size) build(current);
+    if (renderer && (wantGpu() !== before || renderSizeFor(renderer.numEyes) !== renderer.size)) build(current);
   }
 
   function syncQuality() {
-    const q = prefs.quality;
+    const q = prefs.quality, info = gpuInfo();
+    for (const b of qualityPanel.querySelectorAll('[data-renderer]'))
+      b.setAttribute('aria-pressed', String(b.dataset.renderer === q.renderer));
+    const gpu = qualityPanel.querySelector('[data-renderer="gpu"]');
+    gpu.disabled = !info.available || gpuBroken;
+    gpu.title = !info.available ? 'This browser has no WebGL2, so the CPU draws the eyes'
+      : gpuBroken ? 'The GPU failed earlier; reload the page to try it again'
+      : 'Draw on the GPU' + (info.name ? ' (' + info.name + ')' : '') +
+        (info.accelerated ? '' : '. It is software here, which may be slower than the CPU');
+    qualityPanel.querySelector('[data-renderer="auto"]').title =
+      'The GPU when there is a real one, otherwise the CPU. Here: ' + (wantGpu() ? 'GPU' : 'CPU');
     for (const b of qualityPanel.querySelectorAll('[data-res]'))
       b.setAttribute('aria-pressed', String(String(q.resolution) === b.dataset.res));
     for (const b of qualityPanel.querySelectorAll('[data-fps]'))
@@ -1012,6 +1076,8 @@
   $('next').onclick = () => stepPackage(1);
   $('pkg').onclick = () => openPicker(picker.hidden);
   $('quality').onclick = () => openQuality(qualityPanel.hidden);
+  for (const b of qualityPanel.querySelectorAll('[data-renderer]'))
+    b.onclick = () => setQuality({ renderer: b.dataset.renderer });
   for (const b of qualityPanel.querySelectorAll('[data-res]'))
     b.onclick = () => setQuality({ resolution: b.dataset.res === 'auto' ? 'auto' : Number(b.dataset.res) });
   for (const b of qualityPanel.querySelectorAll('[data-fps]'))
@@ -1371,6 +1437,18 @@
     get renderer() { return renderer; },
     get frameCount() { return frameCount; },
     get paintCount() { return paintCount; },
+    get usingGpu() { return glEyes.length > 0; },
+    get gpuInfo() { return gpuInfo(); },
+    get glEyes() { return glEyes; },
+    // Eye e as drawn, RGBA rows top first: drawn again now on the GPU, since
+    // a WebGL canvas is not kept between frames.
+    eyePixels(e) {
+      if (glEyes[e]) {
+        glEyes[e].draw();
+        return glEyes[e].read();
+      }
+      return new Uint8Array(renderer.buffers[e].buffer.slice(0));
+    },
     get blinkCount() { return blinkCount; },
     get packageKey() { return packages[current] ? packages[current].key : null; },
     get packageCount() { return packages.length; },

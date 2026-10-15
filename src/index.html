@@ -42,6 +42,14 @@
   </div>
   <div id="quality-panel" class="popover" role="dialog" aria-label="Quality" hidden>
     <div class="pick-setting">
+      <span class="label">Drawn by</span>
+      <div class="seg" role="group" aria-label="Drawn by">
+        <button data-renderer="auto">Auto</button>
+        <button data-renderer="gpu">GPU</button>
+        <button data-renderer="cpu" title="Draw in JavaScript, as every browser can">CPU</button>
+      </div>
+    </div>
+    <div class="pick-setting">
       <span class="label">Resolution</span>
       <div class="seg" role="group" aria-label="Resolution">
         <button data-res="auto" title="As sharp as this renderer handles comfortably">Auto</button>
@@ -86,7 +94,7 @@
     <button id="blink" title="Blink now and then on their own (B). Click an eye or press Space to blink once">Auto-blink</button>
     <button id="add" title="Add eye folders from this computer">Add eyes…</button>
     <button id="fullscreen" title="Full screen (F)">Full screen</button>
-    <button id="quality" title="Resolution and frame rate (Q)" aria-haspopup="true" aria-expanded="false">Quality</button>
+    <button id="quality" title="GPU or CPU, resolution and frame rate (Q)" aria-haspopup="true" aria-expanded="false">Quality</button>
     <button id="fps-toggle" title="Show the frame rate (I)">FPS</button>
   </div>
 </div>
@@ -109,6 +117,7 @@
 <script src="../build/eyes-data.js"></script>
 <script src="eyes-assets.js"></script>
 <script src="eyes-renderer.js"></script>
+<script src="eyes-gl.js"></script>
 <script src="app.js"></script>
 <!-- /build:js -->
 </body>

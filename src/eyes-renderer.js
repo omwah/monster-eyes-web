@@ -626,6 +626,25 @@
         const rounded = s.slitPupilRounded;
         const narrowest = f32(iRad * f32(0.03));
         const slit = s.slitPupilRadius;
+        // The pupil's outline at each of the 127 openings, worked out once
+        // rather than for every pixel: where it starts along the slit (or
+        // the centre of its arc) and its squared radius.
+        const at = new Float32Array(127), r2 = new Float32Array(127);
+        for (let i = 0; i < 127; i++) {
+          const ratio = f32(i / 128);
+          if (rounded) {
+            const rad = f32(f32(iRad * f32(1 - ratio)) + f32(narrowest * ratio));
+            at[i] = f32(ratio * slit);
+            r2[i] = f32(rad * rad);
+          } else {
+            const y1 = f32(iRad - f32(f32(iRad - slit) * ratio));
+            const x2 = f32(iRad * f32(1 - ratio));
+            const xc = f32(f32(f32(x2 * x2) - f32(y1 * y1)) / f32(2 * x2));
+            const rx = f32(x2 - xc);
+            at[i] = xc;
+            r2[i] = f32(rx * rx);
+          }
+        }
         for (let y = 0; y < mapRadius; y++) {
           const dy = f32(y + 0.5);
           for (let x = 0; x < mapRadius; x++) {
@@ -636,20 +655,14 @@
             const along2 = f32(along * along);
             const across2 = f32(across * across);
             for (let i = 126; i >= 0; i--) {
-              const ratio = f32(i / 128);
               let inside;
               if (rounded) {
-                const len = f32(ratio * slit);
-                const rad = f32(f32(iRad * f32(1 - ratio)) + f32(narrowest * ratio));
+                const len = at[i];
                 const past = along > len ? f32(along - len) : 0;
-                inside = f32(f32(past * past) + across2) <= f32(rad * rad);
+                inside = f32(f32(past * past) + across2) <= r2[i];
               } else {
-                const y1 = f32(iRad - f32(f32(iRad - slit) * ratio));
-                const x2 = f32(iRad * f32(1 - ratio));
-                const xc = f32(f32(f32(x2 * x2) - f32(y1 * y1)) / f32(2 * x2));
-                const rx = f32(x2 - xc);
-                const px = f32(across - xc);
-                inside = f32(f32(px * px) + along2) <= f32(rx * rx);
+                const px = f32(across - at[i]);
+                inside = f32(f32(px * px) + along2) <= r2[i];
               }
               if (inside) {
                 polarDist[y * mapRadius + x] = -1 - i;

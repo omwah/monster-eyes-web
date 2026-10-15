@@ -328,23 +328,40 @@ test('a rebuilt eye is drawn before it is shown, and does not blink', async ({ p
   expect(res.blinking).toBe(false);
 });
 
-test('black lids are see-through, so overlapping eyes show through each other; coloured lids are not', async ({ page }) => {
-  await open(page);
-  const probe = (name) => page.evaluate((name) => {
-    monsterEyesApp.select(monsterEyesApp.indexOf(name));
-    const r = monsterEyesApp.renderer;
-    r.eye.forEach((E) => { E.blinkState = 0; E.blinkFactor = 0; });
-    const c = document.querySelector('#stage canvas');
-    const W = c.width, ctx = c.getContext('2d');
-    // Just inside the circle at the top, which is lid; and the eye's centre.
-    const lid = ctx.getImageData(W >> 1, Math.round(W / 2 - r.circleRadius + 3), 1, 1).data[3];
-    const middle = ctx.getImageData(W >> 1, W >> 1, 1, 1).data[3];
-    return { clear: r.clearLids, lid, middle };
-  }, name);
-  // Dragon's lids are 0x0001, black near enough.
-  expect(await probe('dragon')).toEqual({ clear: true, lid: 0, middle: 255 });
-  expect(await probe('pomni')).toEqual({ clear: false, lid: 255, middle: 255 });
-});
+for (const drawer of ['cpu', 'gpu'])
+  test(`black lids are see-through, so overlapping eyes show through each other; coloured lids are not (${drawer})`, async ({ page }) => {
+    await open(page);
+    if (drawer === 'gpu') {
+      test.skip(!(await app(page, 'monsterEyesApp.gpuInfo.available')), 'This browser has no WebGL2');
+      await page.click('#quality');
+      await page.click('[data-renderer="gpu"]');
+    }
+    const probe = (name) => page.evaluate((name) => {
+      monsterEyesApp.select(monsterEyesApp.indexOf(name));
+      const r = monsterEyesApp.renderer;
+      r.eye.forEach((E) => { E.blinkState = 0; E.blinkFactor = 0; });
+      // Read through the canvas itself, as the page shows it.
+      const c = document.querySelector('#stage canvas');
+      const W = c.width;
+      const alpha = (x, y) => {
+        if (monsterEyesApp.usingGpu) {
+          const g = monsterEyesApp.glEyes[0];
+          g.draw();
+          const px = new Uint8Array(4);
+          g.gl.readPixels(x, W - 1 - y, 1, 1, g.gl.RGBA, g.gl.UNSIGNED_BYTE, px);
+          return px[3];
+        }
+        return c.getContext('2d').getImageData(x, y, 1, 1).data[3];
+      };
+      // Just inside the circle at the top, which is lid; and the eye's centre.
+      return { gpu: monsterEyesApp.usingGpu, clear: r.clearLids,
+        lid: alpha(W >> 1, Math.round(W / 2 - r.circleRadius + 3)), middle: alpha(W >> 1, W >> 1) };
+    }, name);
+    const gpu = drawer === 'gpu';
+    // Dragon's lids are 0x0001, black near enough.
+    expect(await probe('dragon')).toEqual({ gpu, clear: true, lid: 0, middle: 255 });
+    expect(await probe('pomni')).toEqual({ gpu, clear: false, lid: 255, middle: 255 });
+  });
 
 test('the FPS overlay toggles, stays up with the controls hidden, and is remembered', async ({ page }) => {
   await open(page);
@@ -395,13 +412,135 @@ test('Quality: resolution caps the render size, the frame rate cap halves the dr
   await expect(panel).toBeHidden();
   await page.reload();
   await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
-  expect(await app(page, 'monsterEyesApp.prefs.quality')).toEqual({ resolution: 320, fps: 30 });
+  expect(await app(page, 'monsterEyesApp.prefs.quality')).toEqual({ renderer: 'auto', resolution: 320, fps: 30 });
   expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(320);
   await page.keyboard.press('q');
   await expect(panel).toBeVisible();
   await expect(page.locator('[data-res="320"]')).toHaveAttribute('aria-pressed', 'true');
   await page.click('[data-res="auto"]');
   expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(512);
+});
+
+// Every eye, drawn by both renderers from the same state, byte for byte:
+// held still in a few poses, then animated with spin, flow and blinks.
+async function compareRenderers(page) {
+  return page.evaluate(() => {
+    const r = monsterEyesApp.renderer, gl = monsterEyesApp.glEyes;
+    if (!gl.length) return { error: 'not drawing on the GPU' };
+    let frames = 0, bad = null;
+    const check = (label) => {
+      for (let e = 0; e < r.numEyes; e++) {
+        r.updateEye(e, r.now);
+        gl[e].draw();
+        const g = gl[e].read();
+        r.renderEye(e);
+        const c = new Uint8Array(r.buffers[e].buffer);
+        frames++;
+        for (let i = 0; i < c.length; i++)
+          if (c[i] !== g[i]) {
+            const px = i >> 2, W = r.canvasSize;
+            bad = bad || { label, eye: e, x: px % W, y: Math.floor(px / W),
+              cpu: Array.from(c.slice(px * 4, px * 4 + 4)), gpu: Array.from(g.slice(px * 4, px * 4 + 4)) };
+            break;
+          }
+      }
+    };
+    r.autoGaze = false;
+    r.autoBlink = false;
+    r.update(5e6);
+    for (const [gx, gy, pupil, lid] of [[0, 0, 0.5, 0], [1, 0, 0, 0], [-0.7, 0.7, 1, 0.3], [0.2, -1, 0.5, 0.7]]) {
+      r.setScreenGaze(gx, gy);
+      r.setConvergence(0, gx * 0.1, 0);
+      r.setPupil(pupil);
+      for (const E of r.eye) { E.blinkState = 0; E.blinkFactor = lid; }
+      check('pose ' + [gx, gy, pupil, lid]);
+    }
+    r.releaseGaze();
+    r.autoGaze = true;
+    r.autoBlink = true;
+    r.pupilExternal = false;
+    for (let f = 0; f < 24; f++) {
+      r.update(6e6 + f * 2.5e6); // Far enough apart for spin and flow to show
+      check('frame ' + f);
+    }
+    return { frames, bad, size: r.size, eyes: r.numEyes };
+  });
+}
+
+test('the GPU draws exactly what the CPU draws, for every eye', async ({ page }) => {
+  await open(page);
+  const info = await app(page, 'monsterEyesApp.gpuInfo');
+  test.skip(!info.available, 'This browser has no WebGL2');
+  const n = await app(page, 'monsterEyesApp.packageCount');
+  await page.click('#quality');
+  await page.click('[data-renderer="gpu"]');
+  expect(await app(page, 'monsterEyesApp.usingGpu')).toBe(true);
+  // Auto and a pair at the default size, then one eye at a small size: the
+  // tables and the pad differ with each.
+  for (const [eyes, res] of [['auto', 'auto'], ['1', '320']]) {
+    await page.click('[data-res="' + res + '"]');
+    await page.evaluate((eyes) => {
+      document.querySelector(eyes === 'auto' ? '#count-auto' : '#count-1').click();
+    }, eyes);
+    for (let i = 0; i < n; i++) {
+      await page.evaluate((i) => monsterEyesApp.select(i), i);
+      const key = await app(page, 'monsterEyesApp.packageKey');
+      const res = await compareRenderers(page);
+      expect(res.error, key).toBeUndefined();
+      expect(res.bad, `${key} at ${res.size} px`).toBeNull();
+      expect(res.frames).toBeGreaterThanOrEqual(28);
+    }
+  }
+});
+
+test('Auto draws on the CPU where WebGL2 is software or missing, and GPU can be chosen where it is there', async ({ page }) => {
+  await open(page);
+  const info = await app(page, 'monsterEyesApp.gpuInfo');
+  // The test browser's WebGL2 is SwiftShader, which Auto leaves alone.
+  expect(info.accelerated).toBe(false);
+  expect(await app(page, 'monsterEyesApp.usingGpu')).toBe(false);
+  await page.click('#quality');
+  if (info.available) {
+    await page.click('[data-renderer="gpu"]');
+    expect(await app(page, 'monsterEyesApp.usingGpu')).toBe(true);
+    // Auto resolution goes up to 1024 on the GPU, rather than 512.
+    expect(await app(page, 'monsterEyesApp.renderer.size')).toBeGreaterThan(512);
+    await page.keyboard.press('i'); // A click outside would close the panel
+    await expect(page.locator('#fps')).toContainText(/px · GPU/);
+    await page.click('[data-renderer="cpu"]');
+    expect(await app(page, 'monsterEyesApp.usingGpu')).toBe(false);
+    expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(512);
+    await expect(page.locator('#fps')).toContainText(/px · CPU/);
+  }
+  // No WebGL2 at all: GPU cannot be chosen.
+  await page.addInitScript(() => {
+    const get = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+      return type === 'webgl2' ? null : get.call(this, type, ...rest);
+    };
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  expect(await app(page, 'monsterEyesApp.gpuInfo.available')).toBe(false);
+  await page.click('#quality');
+  await expect(page.locator('[data-renderer="gpu"]')).toBeDisabled();
+  expect(await app(page, 'monsterEyesApp.usingGpu')).toBe(false);
+});
+
+test('when the GPU stops, the eyes carry on drawn by the CPU', async ({ page }) => {
+  const errors = await open(page);
+  test.skip(!(await app(page, 'monsterEyesApp.gpuInfo.available')), 'This browser has no WebGL2');
+  await page.click('#quality');
+  await page.click('[data-renderer="gpu"]');
+  expect(await app(page, 'monsterEyesApp.usingGpu')).toBe(true);
+  await page.evaluate(() => monsterEyesApp.glEyes[0].gl.getExtension('WEBGL_lose_context').loseContext());
+  await page.waitForFunction(() => !monsterEyesApp.usingGpu);
+  await expect(page.locator('#toast')).toContainText(/GPU stopped drawing/);
+  await expect(page.locator('[data-renderer="gpu"]')).toBeDisabled();
+  const before = await app(page, 'monsterEyesApp.paintCount');
+  await page.waitForTimeout(300);
+  expect(await app(page, 'monsterEyesApp.paintCount')).toBeGreaterThan(before + 5);
+  expect(errors).toEqual([]);
 });
 
 // Packages whose config names lids in another folder: "../lids/upper.bmp"
