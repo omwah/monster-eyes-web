@@ -47,6 +47,7 @@ pointer, so the screen shows only the eyes.
 | Click an eye | Space | Blink once |
 | Full screen | F | |
 | | H | Hide the controls now |
+| Quality | Q | Resolution and frame rate, for a machine that cannot keep up. *Resolution* caps how many pixels across each eye is drawn with: Auto, Max (1024), High (512), Medium (320) or Low (192). *Frame rate* is Max, as fast as the screen refreshes, or 30 fps, which halves the work on most screens. Both are remembered |
 | FPS | I | Frame-rate overlay: frame rate, slowest frame, time to draw the eyes, and their resolution. It stays up when the controls hide |
 | Add eyes… | | Pick an eye folder, or a folder of them, from the computer. Dropping folders on the page works too |
 

@@ -363,6 +363,47 @@ test('the FPS overlay toggles, stays up with the controls hidden, and is remembe
   await expect(fps).toBeHidden();
 });
 
+test('Quality: resolution caps the render size, the frame rate cap halves the drawing, both are remembered', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await open(page);
+  const panel = page.locator('#quality-panel');
+  await expect(panel).toBeHidden();
+  await page.click('#quality');
+  await expect(panel).toBeVisible();
+  // The controls stay up while the panel is open.
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(3600);
+  expect(await page.evaluate(() => document.body.classList.contains('idle'))).toBe(false);
+
+  expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(512);
+  await page.click('[data-res="192"]');
+  expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(192);
+  await page.click('[data-res="320"]');
+  expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(320);
+
+  const paintsPerFrame = () => page.evaluate(() => new Promise((resolve) => {
+    const f0 = monsterEyesApp.frameCount, p0 = monsterEyesApp.paintCount;
+    setTimeout(() => resolve((monsterEyesApp.paintCount - p0) / (monsterEyesApp.frameCount - f0)), 1000);
+  }));
+  expect(await paintsPerFrame()).toBeGreaterThan(0.95);
+  await page.click('[data-fps="30"]');
+  const capped = await paintsPerFrame();
+  expect(capped).toBeGreaterThan(0.4);
+  expect(capped).toBeLessThan(0.6);
+
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await page.reload();
+  await page.waitForFunction(() => window.monsterEyesApp && monsterEyesApp.renderer);
+  expect(await app(page, 'monsterEyesApp.prefs.quality')).toEqual({ resolution: 320, fps: 30 });
+  expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(320);
+  await page.keyboard.press('q');
+  await expect(panel).toBeVisible();
+  await expect(page.locator('[data-res="320"]')).toHaveAttribute('aria-pressed', 'true');
+  await page.click('[data-res="auto"]');
+  expect(await app(page, 'monsterEyesApp.renderer.size')).toBe(512);
+});
+
 // Packages whose config names lids in another folder: "../lids/upper.bmp"
 // beside the packages, or Adafruit's "donor/upper.bmp" from another package.
 const FIXTURE = path.join(ROOT, 'tests/fixtures/shared-eyes');

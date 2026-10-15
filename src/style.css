@@ -115,8 +115,8 @@ button.pkg {
   white-space: nowrap;
 }
 
-/* The eye picker opens above the bar. */
-#picker {
+/* The eye picker and the quality settings open above the bar. */
+#picker, .popover {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 50%;
@@ -131,7 +131,14 @@ button.pkg {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(6px);
 }
-#picker[hidden] { display: none; }
+#picker[hidden], .popover[hidden] { display: none; }
+.popover {
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  gap: 6px;
+  padding: 10px;
+}
+.popover .hint { margin: 2px 0 0; max-width: 340px; color: var(--bar-muted); font-size: 12px; line-height: 1.4; }
 .pick-head {
   display: flex;
   align-items: center;
@@ -283,4 +290,5 @@ body.show-fps #fps { display: block; }
   button { padding: 0 8px; }
   #bar button.pkg { flex: 0 1 auto; }
   .label { display: none; }
+  .popover .label { display: inline; } /* Two "Max" buttons need their labels */
 }

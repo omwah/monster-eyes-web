@@ -24,7 +24,9 @@
   const DRAG_THRESHOLD = 6;      // CSS px before a press becomes a drag
   const MIN_SCALE = 0.2, MAX_SCALE = 3;
   const DEVICE_GAP = 28;         // The panel's default gap, against a 128 px eye
-  const MAX_RENDER = 512, MIN_RENDER = 128;
+  const MIN_RENDER = 128;
+  const RESOLUTIONS = ['auto', 1024, 512, 320, 192]; // Render px caps; Auto depends on the renderer
+  const FRAME_RATES = [0, 30]; // 0: every screen refresh
   const SLIDE_INTERVALS = [0, 30, 60, 120, 300]; // Seconds; 0 keeps one eye
   const CLOSE_MS = 150, OPEN_MS = 250, FADE_MS = 300; // Slideshow transition
 
@@ -46,6 +48,7 @@
     excluded: [], // Keys of eyes left out of ◀ ▶ and the slideshow
     slideshow: { interval: 0, order: 'order' }, // Seconds per eye (0: always this one)
     layouts: { 1: freshLayout(), 2: freshLayout() },
+    quality: { resolution: 'auto', fps: 0 },
   };
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
@@ -64,6 +67,10 @@
       const ss = prefs.slideshow;
       if (!ss || !SLIDE_INTERVALS.includes(ss.interval) || !['order', 'random'].includes(ss.order))
         prefs.slideshow = { interval: 0, order: 'order' };
+      const q = prefs.quality;
+      if (!q || typeof q !== 'object') prefs.quality = { resolution: 'auto', fps: 0 };
+      if (!RESOLUTIONS.includes(prefs.quality.resolution)) prefs.quality.resolution = 'auto';
+      if (!FRAME_RATES.includes(prefs.quality.fps)) prefs.quality.fps = 0;
     }
   } catch (e) { /* No storage: defaults it is */ }
 
@@ -305,6 +312,7 @@
     picker.hidden = !open;
     $('pkg').setAttribute('aria-expanded', String(open));
     if (open) {
+      openQuality(false);
       refreshPicker();
       const cur = picker.querySelector('.pick-row.current .pick-name') || picker.querySelector('.pick-name');
       if (cur) {
@@ -378,10 +386,16 @@
     return prefs.eyes === 1 || prefs.eyes === 2 ? prefs.eyes : 'auto';
   }
 
+  // The most pixels across an eye is drawn with, from the Quality setting.
+  function maxRender() {
+    const res = prefs.quality.resolution;
+    return res === 'auto' ? 512 : res;
+  }
+
   // Both eyes share one render size: enough for the larger of them.
   function renderSizeFor(n) {
     const size = Math.max(...layoutFor(n).map((r) => r.size)) * view.dpr;
-    return Math.max(MIN_RENDER, Math.min(MAX_RENDER, Math.round(size / 2) * 2));
+    return Math.max(MIN_RENDER, Math.min(maxRender(), Math.round(size / 2) * 2));
   }
 
   function build(index) {
@@ -781,6 +795,7 @@
   // ===========================================================================
 
   let lastFrame = 0;
+  let lastPaint = 0;
   const fpsMeter = { frames: 0, since: 0, text: '' };
 
   // Position the eye canvases; only touches the DOM when something moved.
@@ -827,14 +842,22 @@
 
     runSlideshow(ts);
     followPointer(ts, dt);
+    // A frame rate cap skips drawing, not time: the eyes move as fast, in
+    // fewer steps. The few ms of slack keep a 60 Hz screen at an even 30.
+    const fps = prefs.quality.fps;
+    if (fps && lastPaint && ts - lastPaint < 1000 / fps - 4) return;
+    const paintDt = lastPaint ? Math.min(ts - lastPaint, 100) : dt;
+    lastPaint = ts;
     const ms = paint(ts);
-    meter(ts, dt, ms);
+    meter(ts, paintDt, ms);
   }
 
   // Draw the eyes for time ts and show them. Also called straight after a
   // rebuild, so new canvases never reach the screen empty -- a fresh opaque
   // canvas is black, and for one frame that reads as a black blink.
+  let paintCount = 0;
   function paint(ts) {
+    paintCount++;
     const t0 = performance.now();
     renderer.update(ts * 1000);
     renderer.draw();
@@ -875,7 +898,7 @@
   }
   function goIdle() {
     // Not while the viewer is using the bar.
-    if ($('bar').matches(':hover') || !picker.hidden || !$('empty').hidden) {
+    if ($('bar').matches(':hover') || !picker.hidden || !qualityPanel.hidden || !$('empty').hidden) {
       idleTimer = setTimeout(goIdle, IDLE_MS);
       return;
     }
@@ -932,6 +955,37 @@
     fpsMeter.since = 0; // Fill the overlay on the next frame
   }
 
+  // ---------------------------------------------------------------------------
+  //  Quality: resolution and frame rate, for machines that cannot keep up.
+  // ---------------------------------------------------------------------------
+
+  const qualityPanel = $('quality-panel');
+  function openQuality(open) {
+    qualityPanel.hidden = !open;
+    $('quality').setAttribute('aria-expanded', String(open));
+    if (open) {
+      openPicker(false);
+      syncQuality();
+      const cur = qualityPanel.querySelector('[aria-pressed="true"]');
+      if (cur) cur.focus();
+    }
+  }
+
+  function setQuality(change) {
+    Object.assign(prefs.quality, change);
+    savePrefs();
+    syncQuality();
+    if (renderer && renderSizeFor(renderer.numEyes) !== renderer.size) build(current);
+  }
+
+  function syncQuality() {
+    const q = prefs.quality;
+    for (const b of qualityPanel.querySelectorAll('[data-res]'))
+      b.setAttribute('aria-pressed', String(String(q.resolution) === b.dataset.res));
+    for (const b of qualityPanel.querySelectorAll('[data-fps]'))
+      b.setAttribute('aria-pressed', String(Number(b.dataset.fps) === q.fps));
+  }
+
   function toggleSeparate() {
     prefs.separate = !prefs.separate;
     savePrefs();
@@ -957,6 +1011,11 @@
   $('prev').onclick = () => stepPackage(-1);
   $('next').onclick = () => stepPackage(1);
   $('pkg').onclick = () => openPicker(picker.hidden);
+  $('quality').onclick = () => openQuality(qualityPanel.hidden);
+  for (const b of qualityPanel.querySelectorAll('[data-res]'))
+    b.onclick = () => setQuality({ resolution: b.dataset.res === 'auto' ? 'auto' : Number(b.dataset.res) });
+  for (const b of qualityPanel.querySelectorAll('[data-fps]'))
+    b.onclick = () => setQuality({ fps: Number(b.dataset.fps) });
   for (const b of document.querySelectorAll('[data-interval]'))
     b.onclick = () => setSlideshow({ interval: Number(b.dataset.interval) });
   for (const b of document.querySelectorAll('[data-order]'))
@@ -975,6 +1034,7 @@
   // Close on a press anywhere outside the picker and its button.
   document.addEventListener('pointerdown', (ev) => {
     if (!picker.hidden && !picker.contains(ev.target) && !$('pkg').contains(ev.target)) openPicker(false);
+    if (!qualityPanel.hidden && !qualityPanel.contains(ev.target) && !$('quality').contains(ev.target)) openQuality(false);
   }, true);
   // Keys inside the list: ↑ ↓ move, Space checks or unchecks, Enter shows,
   // Esc closes. They stay in the list rather than reaching the page.
@@ -1030,7 +1090,11 @@
     if (picker.contains(ev.target)) return;
     const k = ev.key;
     let handled = true;
-    if (k === 'ArrowRight' || k === 'PageDown') stepPackage(1, true);
+    if (k === 'Escape' && !qualityPanel.hidden) {
+      openQuality(false);
+      $('quality').focus();
+    }
+    else if (k === 'ArrowRight' || k === 'PageDown') stepPackage(1, true);
     else if (k === 'ArrowLeft' || k === 'PageUp') stepPackage(-1, true);
     else if (k === ' ') blinkNow();
     else if (k === 'b' || k === 'B') toggleAutoBlink();
@@ -1046,6 +1110,7 @@
     else if (k === 'c' || k === 'C') centerLayout();
     else if (k === 'h' || k === 'H') { clearTimeout(idleTimer); goIdle(); }
     else if (k === 'i' || k === 'I') toggleFps();
+    else if (k === 'q' || k === 'Q') openQuality(qualityPanel.hidden);
     else handled = false;
     if (handled) ev.preventDefault();
   });
@@ -1305,6 +1370,7 @@
   window.monsterEyesApp = {
     get renderer() { return renderer; },
     get frameCount() { return frameCount; },
+    get paintCount() { return paintCount; },
     get blinkCount() { return blinkCount; },
     get packageKey() { return packages[current] ? packages[current].key : null; },
     get packageCount() { return packages.length; },

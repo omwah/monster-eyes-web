@@ -40,6 +40,26 @@
       <a id="version" href="https://github.com/omwah/monster-eyes-web/releases" target="_blank" rel="noopener" title="Releases and downloads"></a>
     </div>
   </div>
+  <div id="quality-panel" class="popover" role="dialog" aria-label="Quality" hidden>
+    <div class="pick-setting">
+      <span class="label">Resolution</span>
+      <div class="seg" role="group" aria-label="Resolution">
+        <button data-res="auto" title="As sharp as this renderer handles comfortably">Auto</button>
+        <button data-res="1024" title="Up to 1024 px per eye">Max</button>
+        <button data-res="512" title="Up to 512 px per eye">High</button>
+        <button data-res="320" title="Up to 320 px per eye">Medium</button>
+        <button data-res="192" title="Up to 192 px per eye">Low</button>
+      </div>
+    </div>
+    <div class="pick-setting">
+      <span class="label">Frame rate</span>
+      <div class="seg" role="group" aria-label="Frame rate">
+        <button data-fps="0" title="As fast as the screen refreshes">Max</button>
+        <button data-fps="30" title="30 frames a second: half the work on most screens">30 fps</button>
+      </div>
+    </div>
+    <p class="hint">Lower these if the eyes stutter. FPS (I) shows how long the eyes take to draw.</p>
+  </div>
   <div class="group">
     <button id="prev" class="icon" title="Previous eyes (←)" aria-label="Previous eyes">◀</button>
     <button id="pkg" class="pkg" title="Choose eyes" aria-haspopup="true" aria-expanded="false"><span id="pkg-name">—</span> <span id="pkg-badge" hidden></span> <span aria-hidden="true">▾</span></button>
@@ -66,6 +86,7 @@
     <button id="blink" title="Blink now and then on their own (B). Click an eye or press Space to blink once">Auto-blink</button>
     <button id="add" title="Add eye folders from this computer">Add eyes…</button>
     <button id="fullscreen" title="Full screen (F)">Full screen</button>
+    <button id="quality" title="Resolution and frame rate (Q)" aria-haspopup="true" aria-expanded="false">Quality</button>
     <button id="fps-toggle" title="Show the frame rate (I)">FPS</button>
   </div>
 </div>
