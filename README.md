@@ -47,8 +47,8 @@ pointer, so the screen shows only the eyes.
 | Click an eye | Space | Blink once |
 | Full screen | F | |
 | | H | Hide the controls now |
-| Quality | Q | Resolution and frame rate, for a machine that cannot keep up. *Resolution* caps how many pixels across each eye is drawn with: Auto, Max (1024), High (512), Medium (320) or Low (192). *Frame rate* is Max, as fast as the screen refreshes, or 30 fps, which halves the work on most screens. Both are remembered |
-| FPS | I | Frame-rate overlay: frame rate, slowest frame, time to draw the eyes, and their resolution. It stays up when the controls hide |
+| Quality | Q | What draws the eyes, and how finely, for a machine that cannot keep up. *Drawn by*: Auto uses the GPU where there is a real one and the CPU otherwise; GPU or CPU picks one. *Resolution* caps how many pixels across each eye is drawn with: Auto (1024 on the GPU, 512 on the CPU), Max (1024), High (512), Medium (320) or Low (192). *Frame rate* is Max, as fast as the screen refreshes, or 30 fps, which halves the work on most screens. All are remembered; see [Performance](#performance) |
+| FPS | I | Frame-rate overlay: frame rate, slowest frame, time to draw the eyes, their resolution, and whether the GPU or the CPU draws them. It stays up when the controls hide |
 | Add eyes… | | Pick an eye folder, or a folder of them, from the computer. Dropping folders on the page works too |
 
 **Slideshow.** At the bottom of the eye list, *Show each eye* sets how long
@@ -109,6 +109,7 @@ exists, which is handy while editing.
 |---|---|
 | `src/eyes-assets.js` | `config.eye` parsing, BMP decoding. A port of `Eyes_Assets.cpp` |
 | `src/eyes-renderer.js` | The renderer and animators. A port of `Adafruit_Monster_Eyes.cpp`; the differences are listed at its top |
+| `src/eyes-gl.js` | Draws the renderer's eyes with WebGL2: the per-pixel part of the renderer as a fragment shader, over the same tables |
 | `src/app.js` | Layout, input, controls, the eye list and slideshow, wake lock, adding folders, and loading the web version's eye files |
 | `tools/build.py` | Builds the three versions: inlines the code, and either bundles the eyes or writes one script per eye. Stamps the version, and packages releases |
 | `.github/workflows/pages.yml` | Publishes the web version to GitHub Pages on every push to `main`, and keeps the release files with the run |
@@ -192,16 +193,44 @@ version over http too, and checks:
   of the customizable build, and the web build's first eye showing before
   the rest have loaded
 - that two eyes at 1920×1080 hold 60 fps
+- that the GPU draws every package exactly as the CPU does, byte for byte,
+  held still and animated, at two sizes; that Auto keeps to the CPU on
+  software WebGL; and that the CPU takes over when the GPU stops
+- the Quality settings: resolution caps, the 30 fps cap, and that both
+  are remembered
+
+The tests get WebGL2 from Chromium's software renderer, SwiftShader. The
+Playwright config starts the browser without `DISPLAY`, since a forwarded
+X display that fails would take WebGL down with it.
 
 Chromium needs some system libraries. If it will not start, run
 `sudo PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers npx playwright install-deps chromium`.
 
 ## Performance
 
-Each eye is drawn on the CPU into its own canvas, at up to 512 px, and the
-browser scales it to the size on screen. Two 512 px eyes take a few
-milliseconds a frame. Resolution stays fixed for a given eye size; if a
-machine cannot keep up, reduce the eye size or use one eye.
+Each eye is drawn into its own canvas, about as many pixels across as it
+takes on screen up to a cap, and the browser scales it to fit.
+
+**GPU or CPU.** With a GPU, a WebGL2 shader draws the pixels; the CPU only
+runs the animation, a few hundred values a frame. This makes 1024 px eyes
+cheap, so Auto resolution goes up to 1024 there. Without one, the eyes are
+drawn in JavaScript, capped at 512 px: two 512 px eyes take about 5 to 8 ms
+a frame on a desktop CPU. Both draw exactly the same pixels.
+
+Auto picks the GPU only where it is a real one. Where WebGL2 is software
+(SwiftShader, which Chrome falls back to when the GPU is blocklisted,
+llvmpipe, or Microsoft's Basic Render Driver), it can be slower than
+JavaScript: SwiftShader takes about three times as long. Choose GPU in
+Quality to use it anyway; Mesa's llvmpipe, for one, is about twice as fast
+as JavaScript on 8 cores. The FPS overlay (I) shows which is drawing and
+what it costs.
+
+**Slow machines.** Resolution stays fixed for a given eye size and never
+drops on its own. If the eyes stutter, lower *Resolution* in Quality,
+choose 30 fps, make the eyes smaller, or show one eye.
+
+Changing eye, or resizing, builds the eye's tables again. That takes up to
+a quarter of a second at 1024 px for slit-pupil eyes, and less below that.
 
 ## Licence and credits
 

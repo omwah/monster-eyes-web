@@ -802,6 +802,8 @@ test('Auto-blink toggles blinking on its own; Space still blinks; no lids, no to
   // Off: the eyes never start a blink on their own, even when one is due.
   await blink.click();
   await expect(blink).toHaveAttribute('aria-pressed', 'false');
+  // A blink already under way, like the one a fresh eye opens with, finishes.
+  await page.waitForFunction(() => !monsterEyesApp.renderer.eye.some((E) => E.blinkState));
   const blinked = await page.evaluate(() => new Promise((resolve) => {
     const r = monsterEyesApp.renderer;
     r.timeToNextBlink = 0; // Due now, if it were allowed
