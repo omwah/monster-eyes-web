@@ -355,12 +355,15 @@ for (const drawer of ['cpu', 'gpu'])
       };
       // Just inside the circle at the top, which is lid; and the eye's centre.
       return { gpu: monsterEyesApp.usingGpu, clear: r.clearLids,
-        lid: alpha(W >> 1, Math.round(W / 2 - r.circleRadius + 3)), middle: alpha(W >> 1, W >> 1) };
+        lid: alpha(W >> 1, Math.round(W / 2 - r.circleRadius + 3)), middle: alpha(W >> 1, W >> 1),
+        corner: alpha(0, 0) };
     }, name);
     const gpu = drawer === 'gpu';
     // Dragon's lids are 0x0001, black near enough.
-    expect(await probe('dragon')).toEqual({ gpu, clear: true, lid: 0, middle: 255 });
-    expect(await probe('pomni')).toEqual({ gpu, clear: false, lid: 255, middle: 255 });
+    // Outside the circle, CSS clips the CPU's canvas; the GPU clears it itself,
+    // as Firefox on Android does not clip a WebGL canvas.
+    expect(await probe('dragon')).toEqual({ gpu, clear: true, lid: 0, middle: 255, corner: 0 });
+    expect(await probe('pomni')).toEqual({ gpu, clear: false, lid: 255, middle: 255, corner: gpu ? 0 : 255 });
   });
 
 test('the FPS overlay toggles, stays up with the controls hidden, and is remembered', async ({ page }) => {
@@ -436,13 +439,22 @@ async function compareRenderers(page) {
         r.renderEye(e);
         const c = new Uint8Array(r.buffers[e].buffer);
         frames++;
-        for (let i = 0; i < c.length; i++)
+        const W = r.canvasSize, R = r.circleRadius - 0.5;
+        for (let i = 0; i < c.length; i++) {
+          // The GPU clears what lies outside the circle; the CPU leaves that to CSS.
+          const px = i >> 2, ox = (px % W) + 0.5 - W / 2, oy = Math.floor(px / W) + 0.5 - W / 2;
+          if (ox * ox + oy * oy > R * R) {
+            // Wholly outside, it must be clear.
+            if ((i & 3) === 3 && ox * ox + oy * oy > (R + 1) * (R + 1) && g[i] !== 0)
+              bad = bad || { label, eye: e, outside: true, x: px % W, y: Math.floor(px / W), gpu: g[i] };
+            continue;
+          }
           if (c[i] !== g[i]) {
-            const px = i >> 2, W = r.canvasSize;
             bad = bad || { label, eye: e, x: px % W, y: Math.floor(px / W),
               cpu: Array.from(c.slice(px * 4, px * 4 + 4)), gpu: Array.from(g.slice(px * 4, px * 4 + 4)) };
             break;
           }
+        }
       }
     };
     r.autoGaze = false;

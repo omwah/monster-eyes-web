@@ -35,7 +35,9 @@ uniform int uDiscCut, uDiscScale, uRollSin, uRollCos;
 uniform bool uRolled, uIrisDilation, uTexturedPupil;
 uniform int uFlowAmp, uFlowWaveQ, uFlowTime;
 uniform uvec4 uPupilColor, uBackColor, uEyelidColor;
+uniform vec3 uClip;
 out vec4 outColor;
+vec4 col;
 
 const int OUTSIDE = -32768;
 
@@ -46,11 +48,11 @@ vec4 sclera(int row, int a) {
   return word(texelFetch(uSclera, ivec2((a * sz.x) >> 10, row), 0));
 }
 
-void main() {
+void eye() {
   int x = int(gl_FragCoord.x) - uPad, y = int(gl_FragCoord.y) - uPad;
   ivec2 span = texelFetch(uSpans, ivec2(x + uPad, 0), 0).rg;
   if (span.x >= span.y || y < span.x || y > span.y) {
-    outColor = word(uEyelidColor);
+    col = word(uEyelidColor);
     return;
   }
 
@@ -72,7 +74,7 @@ void main() {
   }
   int dx = texelFetch(uDisplace, ivec2(dxBase, doff), 0).r;
   if (dx == OUTSIDE) {
-    outColor = word(uEyelidColor); // Outside the eyeball
+    col = word(uEyelidColor); // Outside the eyeball
     return;
   }
   dx *= xmul;
@@ -86,7 +88,7 @@ void main() {
     my = mR + ((cx * uRollSin + cy * uRollCos) >> 15);
   }
   if (mx < 0 || mx >= 2 * mR || my < 0 || my >= 2 * mR) {
-    outColor = word(uBackColor); // Off the map
+    col = word(uBackColor); // Off the map
     return;
   }
 
@@ -119,25 +121,25 @@ void main() {
   int irisW = irisSize.x, irisH = irisSize.y;
   if (dist >= 0) {
     int a = ((angle + uScleraAngle) & 1023) ^ uScleraMirror;
-    outColor = sclera((dist * textureSize(uSclera, 0).y) >> 7, a);
+    col = sclera((dist * textureSize(uSclera, 0).y) >> 7, a);
   } else if (dist > -128 && uIrisDilation) {
     int depth = -dist - 1;
     if (depth < uDiscCut) {
       int sa = ((angle + uScleraAngle) & 1023) ^ uScleraMirror;
-      outColor = sclera(textureSize(uSclera, 0).y - 1, sa);
+      col = sclera(textureSize(uSclera, 0).y - 1, sa);
     } else {
       int a = ((angle + uIrisAngle) & 1023) ^ uIrisMirror;
       // JavaScript's >>> works on the product wrapped to 32 bits; so does uint.
       int row = int((uint(depth - uDiscCut) * uint(uDiscScale)) >> 15u);
       if (row >= irisH) row = irisH - 1;
-      outColor = word(texelFetch(uIris, ivec2((a * irisW) >> 10, row), 0));
+      col = word(texelFetch(uIris, ivec2((a * irisW) >> 10, row), 0));
     }
   } else if (dist > -128) {
     // floor(-dist * iPupil / 32768), split so the product cannot overflow.
     int n = -dist;
     int ty = n * (uIPupil >> 15) + ((n * (uIPupil & 32767)) >> 15);
     if (ty >= irisH && !uTexturedPupil) {
-      outColor = word(uPupilColor);
+      col = word(uPupilColor);
     } else {
       if (ty >= irisH) ty = irisH - 1;
       int a = ((angle + uIrisAngle) & 1023) ^ uIrisMirror;
@@ -153,11 +155,18 @@ void main() {
         if (row < 0) row = 0;
         else if (row >= irisH) row = irisH - 1;
       }
-      outColor = word(texelFetch(uIris, ivec2(tx, row), 0));
+      col = word(texelFetch(uIris, ivec2(tx, row), 0));
     }
   } else {
-    outColor = word(uBackColor); // Back of eye
+    col = word(uBackColor); // Back of eye
   }
+}
+// Clear what lies outside the eyeball's circle, as the canvas's CSS
+// clip-path does: some browsers (Firefox on Android) ignore that on WebGL.
+void main() {
+  eye();
+  float d = length(gl_FragCoord.xy - uClip.xy);
+  outColor = vec4(col.rgb, col.a * clamp(uClip.z + 0.5 - d, 0.0, 1.0));
 }`;
 
   // A packed RGBA word, as the renderer's buffers hold, as four bytes.
@@ -212,7 +221,7 @@ void main() {
       this.lost = false;
       this.destroyed = false;
       const gl = (this.gl = canvas.getContext('webgl2', {
-        alpha: r.clearLids, premultipliedAlpha: false, antialias: false, depth: false, stencil: false,
+        alpha: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false,
       }));
       if (!gl) throw new Error('no WebGL2');
       canvas.addEventListener('webglcontextlost', () => { if (!this.destroyed) this.lost = true; });
@@ -269,6 +278,7 @@ void main() {
       gl.uniform1i(this.u.uPad, r.pad);
       gl.uniform1i(this.u.uHalf, r.half);
       gl.uniform1i(this.u.uMapRadius, M);
+      gl.uniform3f(this.u.uClip, r.canvasSize / 2, r.canvasSize / 2, r.circleRadius);
       gl.viewport(0, 0, r.canvasSize, r.canvasSize);
     }
 
