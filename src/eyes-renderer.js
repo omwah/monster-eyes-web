@@ -244,6 +244,7 @@
           this.hasLids = true;
           break;
         }
+      this.spans = new Int32Array(this.canvasSize * 2);
       this.buffers = [];
       for (let e = 0; e < this.numEyes; e++)
         this.buffers.push(new Uint32Array(this.canvasSize * this.canvasSize));
@@ -995,42 +996,18 @@
     // column from the BOTTOM of the eye upward (+Y is up in its maths), so row
     // y here is buffer row size - 1 - y.
 
-    renderEye(e) {
+    // Everything one frame of one eye needs that is the same for every pixel.
+    // The GPU renderer (eyes-gl.js) draws from the same values.
+    eyeParams(e) {
       const E = this.eye[e];
       const s = this.settings;
-      const half = this.half, size = this.size;
-      const out = this.buffers[e];
-      const xPositionOverMap = Math.trunc(E.eyeX - half);
-      const yPositionOverMap = Math.trunc(E.eyeY - half);
-      const upperLidFactor = f32(f32(1 - E.blinkFactor) * E.upperLidFactor);
-      const lowerLidFactor = f32(f32(1 - E.blinkFactor) * E.lowerLidFactor);
-      const iris = this.iris.data, irisW = this.iris.width, irisH = this.iris.height;
-      const sclera = this.sclera.data, scleraW = this.sclera.width, scleraH = this.sclera.height;
+      const irisH = this.iris.height;
       const pupilFactor = E.pupilFactor > f32(0.004) ? E.pupilFactor : f32(0.004);
-      const iPupilFactor = Math.trunc(f32(f32(irisH * 256) * f32(1 / pupilFactor)));
-      const irisAngle = E.irisAngle;
-      const flowAmp = this.flowAmp, flowWaveQ = this.flowWaveQ, flowTime = this.flowTime;
-      const flowSin = this.flowSin, flowPhase = this.flowPhase;
-      const pupilColor = pack565(s.pupilColor);
-      const texturedPupil = s.texturedPupil;
-      const irisDilation = s.irisDilation && irisH > 0;
       const discSpan = f32(1 - E.pupilFactor);
       let discCut = Math.trunc(f32(f32(f32(1 - discSpan) * 127) + 0.5));
       if (discCut < 0) discCut = 0;
       else if (discCut > 126) discCut = 126;
-      const discScale = Math.floor((irisH << 15) / (127 - discCut));
-      const backColor = pack565(s.backColor);
-      const eyelidColor = this.clearLids ? 0 : pack565(s.eyelidColor);
       const v = this.variant[e];
-      const irisMirror = v.irisMirror, scleraMirror = v.scleraMirror;
-      const scleraAngle = E.scleraAngle;
-      const mirrorLids = v.eyelidMirror;
-      const displace = this.displace, polarAngle = this.polarAngle, polarDist = this.polarDist;
-      const mapRadius = this.mapRadius, mapDiameter = this.mapDiameter;
-      const upperOpen = this.upperOpen, upperClosed = this.upperClosed;
-      const lowerOpen = this.lowerOpen, lowerClosed = this.lowerClosed;
-      const scleraLastRow = (scleraH - 1) * scleraW;
-
       let rollDeg = v.roll;
       if (v.cyclovergence !== 0) {
         const down = this.gazeY();
@@ -1038,11 +1015,38 @@
       }
       const rolled = rollDeg !== 0;
       const rollRad = (-rollDeg * M_PI) / 180;
-      const rollSin = rolled ? Math.trunc(Math.sin(rollRad) * 32768) : 0;
-      const rollCos = rolled ? Math.trunc(Math.cos(rollRad) * 32768) : 32768;
-      const last = size - 1;
-      const pad = this.pad, W = size + 2 * pad, D = half + pad;
+      return {
+        xPositionOverMap: Math.trunc(E.eyeX - this.half),
+        yPositionOverMap: Math.trunc(E.eyeY - this.half),
+        iPupilFactor: Math.trunc(f32(f32(irisH * 256) * f32(1 / pupilFactor))),
+        irisAngle: E.irisAngle,
+        scleraAngle: E.scleraAngle,
+        irisMirror: v.irisMirror,
+        scleraMirror: v.scleraMirror,
+        discCut,
+        discScale: Math.floor((irisH << 15) / (127 - discCut)),
+        irisDilation: s.irisDilation && irisH > 0,
+        texturedPupil: s.texturedPupil,
+        rolled,
+        rollSin: rolled ? Math.trunc(Math.sin(rollRad) * 32768) : 0,
+        rollCos: rolled ? Math.trunc(Math.cos(rollRad) * 32768) : 32768,
+        pupilColor: pack565(s.pupilColor),
+        backColor: pack565(s.backColor),
+        eyelidColor: this.clearLids ? 0 : pack565(s.eyelidColor),
+      };
+    }
 
+    // Where the lids are in each column of the buffer, pad included: out gets
+    // [y1, y2] per column, the eye showing from render row y1 to y2. Where
+    // y1 >= y2 the lids are shut and the whole column is lid.
+    lidSpans(e, out) {
+      const E = this.eye[e];
+      const size = this.size, last = size - 1, pad = this.pad;
+      const upperLidFactor = f32(f32(1 - E.blinkFactor) * E.upperLidFactor);
+      const lowerLidFactor = f32(f32(1 - E.blinkFactor) * E.lowerLidFactor);
+      const upperOpen = this.upperOpen, upperClosed = this.upperClosed;
+      const lowerOpen = this.lowerOpen, lowerClosed = this.lowerClosed;
+      const mirrorLids = this.variant[e].eyelidMirror;
       // x and y are in the square's own coordinates; outside it, in the pad,
       // they run negative or past the last column and row.
       // Lid edges in one column of the lid tables, before any clamping.
@@ -1052,8 +1056,8 @@
         Math.trunc(f32(0.5 + f32(upperLidFactor * (upperOpen[c] - upperClosed[c]))));
       const SLOPE_SPAN = 4; // Columns over which the edge slope is measured
 
-      for (let x = -pad; x < size + pad; x++) {
-        let lidColumn = mirrorLids ? last - x : x;
+      for (let x = -pad, i = 0; x < size + pad; x++, i += 2) {
+        const lidColumn = mirrorLids ? last - x : x;
         let y1, y2;
         if (lidColumn >= 0 && lidColumn <= last) {
           y1 = lowerAt(lidColumn);
@@ -1075,6 +1079,47 @@
           if (y1 < 0) y1 = 0;
           if (y2 > last) y2 = last;
         }
+        if (y1 < y2) {
+          // A lid that is out of the way at the edge of the square stays out
+          // of the way in the pad.
+          if (y1 === 0) y1 = -pad;
+          if (y2 === last) y2 = last + pad;
+        }
+        out[i] = y1;
+        out[i + 1] = y2;
+      }
+      return out;
+    }
+
+    renderEye(e) {
+      const P = this.eyeParams(e);
+      const half = this.half, size = this.size;
+      const out = this.buffers[e];
+      const spans = this.lidSpans(e, this.spans);
+      const xPositionOverMap = P.xPositionOverMap;
+      const yPositionOverMap = P.yPositionOverMap;
+      const iris = this.iris.data, irisW = this.iris.width, irisH = this.iris.height;
+      const sclera = this.sclera.data, scleraW = this.sclera.width, scleraH = this.sclera.height;
+      const iPupilFactor = P.iPupilFactor;
+      const irisAngle = P.irisAngle;
+      const flowAmp = this.flowAmp, flowWaveQ = this.flowWaveQ, flowTime = this.flowTime;
+      const flowSin = this.flowSin, flowPhase = this.flowPhase;
+      const pupilColor = P.pupilColor;
+      const texturedPupil = P.texturedPupil;
+      const irisDilation = P.irisDilation;
+      const discCut = P.discCut, discScale = P.discScale;
+      const backColor = P.backColor;
+      const eyelidColor = P.eyelidColor;
+      const irisMirror = P.irisMirror, scleraMirror = P.scleraMirror;
+      const scleraAngle = P.scleraAngle;
+      const displace = this.displace, polarAngle = this.polarAngle, polarDist = this.polarDist;
+      const mapRadius = this.mapRadius, mapDiameter = this.mapDiameter;
+      const scleraLastRow = (scleraH - 1) * scleraW;
+      const rolled = P.rolled, rollSin = P.rollSin, rollCos = P.rollCos;
+      const pad = this.pad, W = size + 2 * pad, D = half + pad;
+
+      for (let x = -pad, i = 0; x < size + pad; x++, i += 2) {
+        const y1 = spans[i], y2 = spans[i + 1];
 
         // Buffer index of render row y in this column: rows are stored top
         // first, and render y counts up from the bottom.
@@ -1083,10 +1128,6 @@
           for (let y = -pad; y < size + pad; y++, o -= W) out[o] = eyelidColor;
           continue;
         }
-        // A lid that is out of the way at the edge of the square stays out of
-        // the way in the pad.
-        if (y1 === 0) y1 = -pad;
-        if (y2 === last) y2 = last + pad;
 
         let y = -pad;
         for (; y < y1; y++, o -= W) out[o] = eyelidColor;
